@@ -1,84 +1,56 @@
 export default async function handler(req, res) {
-    // 1. Aceptar solo peticiones POST
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    if (req.body && req.body.challenge) return res.status(200).send({ challenge: req.body.challenge });
 
-    // 2. Validación de seguridad (Challenge) de Monday.com
-    if (req.body && req.body.challenge) {
-        return res.status(200).send({ challenge: req.body.challenge });
-    }
-
-    // 3. Extraer el evento del Webhook
     const { event } = req.body;
-    if (!event || event.type !== 'update_column_value') {
-        return res.status(200).json({ message: 'Evento ignorado (no es un cambio de estado)' });
-    }
+    if (!event || event.type !== 'update_column_value') return res.status(200).json({ message: 'Ignorado' });
 
-    const pulseId = event.pulseId; // El ID de la fila en PRUEBAS API
+    const pulseId = event.pulseId;
     const token = process.env.MONDAY_API_KEY;
 
-    if (!token) {
-        console.error("Falta la variable de entorno MONDAY_API_KEY");
-        return res.status(500).json({ error: 'Configuración del servidor incompleta' });
-    }
-
-    // Helper para hacer consultas a Monday
     const fetchMonday = async (query) => {
         const response = await fetch("https://api.monday.com/v2", {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token,
-                'API-Version': '2023-10'
-            },
+            headers: { 'Content-Type': 'application/json', 'Authorization': token, 'API-Version': '2023-10' },
             body: JSON.stringify({ query })
         });
         return response.json();
     };
 
     try {
-        // 4. Leer la "Cantidad a Fabricar" del tablero PRUEBAS API
-        const queryGenerador = `query {
-      items (ids: [${pulseId}]) {
-        column_values (ids: ["numeric_mm7m4t8r"]) {
-          value
-        }
-      }
-    }`;
+        // 1. Obtener la cantidad a fabricar
+        const queryGenerador = `query { items (ids: [${pulseId}]) { column_values (ids: ["numeric_mm7m4t8r"]) { value } } }`;
         const resGenerador = await fetchMonday(queryGenerador);
         const rawValue = resGenerador.data?.items?.[0]?.column_values?.[0]?.value;
         const cantidadEquipos = rawValue ? Number(JSON.parse(rawValue)) : 1;
 
-        console.log(`---> Cantidad a fabricar detectada: ${cantidadEquipos}`);
-
-        // 5. Leer los materiales del BOM MODULAR (ID: 18432584292, Grupo: topics)
+        // 2. Extraer del BOM (Agregamos display_value para forzar la lectura de las columnas Mirror)
         const queryBOM = `query {
       boards(ids: [18432584292]) {
-        groups(ids: ["topics"]) {
-          items_page(limit: 500) {
-            items {
-              name
-              column_values(ids: ["lookup_mm7h5phh", "lookup_mm7gfk5t", "lookup_mm7g5ww3", "lookup_mm7g98np", "numeric_mm7hhd25"]) {
-                id
-                text
-              }
+        items_page(limit: 500) {
+          items {
+            name
+            column_values(ids: ["lookup_mm7h5phh", "lookup_mm7gfk5t", "lookup_mm7g5ww3", "lookup_mm7g98np", "numeric_mm7hhd25"]) {
+              id
+              text
+              display_value
             }
           }
         }
       }
     }`;
         const resBOM = await fetchMonday(queryBOM);
-        const itemsBOM = resBOM.data?.boards?.[0]?.groups?.[0]?.items_page?.items || [];
+        const itemsBOM = resBOM.data?.boards?.[0]?.items_page?.items || [];
 
-        console.log(`---> Extraídos del BOM Modular: ${itemsBOM.length} artículos`);
-
-        // 6. El Núcleo: Consolidación y Multiplicación
         let consolidado = {};
 
         itemsBOM.forEach(item => {
             const cols = item.column_values || [];
-            const getVal = (id) => cols.find(c => c.id === id)?.text || "";
+            // Mejoramos el extractor para columnas Mirror
+            const getVal = (id) => {
+                const col = cols.find(c => c.id === id);
+                return col ? (col.text || col.display_value || "") : "";
+            };
 
             const sku = getVal("lookup_mm7h5phh") || item.name;
             const descripcion = getVal("lookup_mm7gfk5t");
@@ -88,9 +60,6 @@ export default async function handler(req, res) {
 
             const cantidadRequerida = reqStr ? parseFloat(reqStr) : 0;
             const totalFila = cantidadRequerida * cantidadEquipos;
-
-            // RAYOS X: Imprimir qué está leyendo exactamente en cada celda
-            console.log(`[Rayos X] Fila: ${item.name} | SKU: '${sku}' | Cantidad Original: '${reqStr}' | Total Calculado: ${totalFila}`);
 
             if (sku && totalFila > 0) {
                 if (consolidado[sku]) {
@@ -103,34 +72,44 @@ export default async function handler(req, res) {
 
         const arrayConsolidado = Object.values(consolidado);
 
-        console.log(`---> Artículos listos para inyectar en LISTAS: ${arrayConsolidado.length}`);
-
-        // 7. Escritura Rápida en Vercel
+        // 3. Constructor dinámico de columnas (Evita errores si un campo está vacío)
         const mutaciones = arrayConsolidado.map(item => {
-            const safeDesc = (item.descripcion || "").replace(/"/g, '\\"');
-            const safeFamilia = (item.familia || "").replace(/"/g, '\\"');
-            const safeUnidad = (item.unidad || "").replace(/"/g, '\\"');
+            let colVals = {
+                "numeric_mm7makx4": item.cantidadTotal.toString()
+            };
+
+            // Solo agregamos los campos si realmente tienen información
+            if (item.descripcion) colVals["long_text_mm7mrdaj"] = { text: item.descripcion };
+            if (item.unidad) colVals["text_mm7mg8bn"] = item.unidad;
+            if (item.familia) colVals["dropdown_mm7mbz7a"] = { labels: [item.familia] };
+
+            // Convertimos el objeto a string y escapamos las comillas para GraphQL
+            const columnValuesStr = JSON.stringify(colVals).replace(/"/g, '\\"');
 
             const mutation = `mutation {
         create_item (
           board_id: 18433034563, 
-          group_id: "topics", 
+          group_id: "topics",
           item_name: "${item.sku}", 
-          column_values: "{\\"long_text_mm7mrdaj\\": {\\"text\\": \\"${safeDesc}\\"}, \\"numeric_mm7makx4\\": ${item.cantidadTotal}, \\"text_mm7mg8bn\\": \\"${safeUnidad}\\", \\"dropdown_mm7mbz7a\\": {\\"labels\\": [\\"${safeFamilia}\\"]}}"
+          column_values: "${columnValuesStr}"
         ) { id }
       }`;
             return fetchMonday(mutation);
         });
 
-        await Promise.all(mutaciones);
+        const resultados = await Promise.all(mutaciones);
 
-        console.log(`---> ¡Éxito! Inyectados ${mutaciones.length} artículos en Monday.`);
+        // RAYOS X PARA MONDAY: Imprimir si Monday rechaza alguna fila
+        resultados.forEach((res, index) => {
+            if (res.errors) {
+                console.error(`[Error de Inyección - Fila ${index}]:`, JSON.stringify(res.errors));
+            }
+        });
 
-        // 8. Responder a Monday que todo finalizó con éxito
         return res.status(200).json({ success: true, procesados: arrayConsolidado.length });
 
     } catch (error) {
-        console.error("---> Error crítico procesando BOM:", error);
+        console.error("---> Error crítico:", error);
         return res.status(500).json({ error: error.message });
     }
 }
