@@ -50,7 +50,6 @@ export default async function handler(req, res) {
         const rawValue = resGenerador.data?.items?.[0]?.column_values?.[0]?.value;
         const cantidadEquipos = rawValue ? Number(JSON.parse(rawValue)) : 1;
 
-        // LOG 1: Verificar cuántos equipos vamos a armar
         console.log(`---> Cantidad a fabricar detectada: ${cantidadEquipos}`);
 
         // 5. Leer los materiales del BOM MODULAR (ID: 18432584292, Grupo: topics)
@@ -72,7 +71,6 @@ export default async function handler(req, res) {
         const resBOM = await fetchMonday(queryBOM);
         const itemsBOM = resBOM.data?.boards?.[0]?.groups?.[0]?.items_page?.items || [];
 
-        // LOG 2: Verificar cuántos extrajo de la tabla original
         console.log(`---> Extraídos del BOM Modular: ${itemsBOM.length} artículos`);
 
         // 6. El Núcleo: Consolidación y Multiplicación
@@ -91,6 +89,9 @@ export default async function handler(req, res) {
             const cantidadRequerida = reqStr ? parseFloat(reqStr) : 0;
             const totalFila = cantidadRequerida * cantidadEquipos;
 
+            // RAYOS X: Imprimir qué está leyendo exactamente en cada celda
+            console.log(`[Rayos X] Fila: ${item.name} | SKU: '${sku}' | Cantidad Original: '${reqStr}' | Total Calculado: ${totalFila}`);
+
             if (sku && totalFila > 0) {
                 if (consolidado[sku]) {
                     consolidado[sku].cantidadTotal += totalFila;
@@ -102,12 +103,10 @@ export default async function handler(req, res) {
 
         const arrayConsolidado = Object.values(consolidado);
 
-        // LOG 3: Verificar cuántos quedaron después de multiplicar y agrupar
         console.log(`---> Artículos listos para inyectar en LISTAS: ${arrayConsolidado.length}`);
 
         // 7. Escritura Rápida en Vercel
         const mutaciones = arrayConsolidado.map(item => {
-            // Protecciones por si algún campo en Monday estaba vacío
             const safeDesc = (item.descripcion || "").replace(/"/g, '\\"');
             const safeFamilia = (item.familia || "").replace(/"/g, '\\"');
             const safeUnidad = (item.unidad || "").replace(/"/g, '\\"');
