@@ -47,9 +47,11 @@ export default async function handler(req, res) {
       }
     }`;
         const resGenerador = await fetchMonday(queryGenerador);
-        // Extraemos el número, si está vacío o falla, usamos 1 por defecto
         const rawValue = resGenerador.data?.items?.[0]?.column_values?.[0]?.value;
         const cantidadEquipos = rawValue ? Number(JSON.parse(rawValue)) : 1;
+
+        // LOG 1: Verificar cuántos equipos vamos a armar
+        console.log(`---> Cantidad a fabricar detectada: ${cantidadEquipos}`);
 
         // 5. Leer los materiales del BOM MODULAR (ID: 18432584292, Grupo: topics)
         const queryBOM = `query {
@@ -70,11 +72,14 @@ export default async function handler(req, res) {
         const resBOM = await fetchMonday(queryBOM);
         const itemsBOM = resBOM.data?.boards?.[0]?.groups?.[0]?.items_page?.items || [];
 
+        // LOG 2: Verificar cuántos extrajo de la tabla original
+        console.log(`---> Extraídos del BOM Modular: ${itemsBOM.length} artículos`);
+
         // 6. El Núcleo: Consolidación y Multiplicación
         let consolidado = {};
 
         itemsBOM.forEach(item => {
-            const cols = item.column_values;
+            const cols = item.column_values || [];
             const getVal = (id) => cols.find(c => c.id === id)?.text || "";
 
             const sku = getVal("lookup_mm7h5phh") || item.name;
@@ -82,8 +87,8 @@ export default async function handler(req, res) {
             const familia = getVal("lookup_mm7g5ww3");
             const unidad = getVal("lookup_mm7g98np");
             const reqStr = getVal("numeric_mm7hhd25");
-            const cantidadRequerida = reqStr ? parseFloat(reqStr) : 0;
 
+            const cantidadRequerida = reqStr ? parseFloat(reqStr) : 0;
             const totalFila = cantidadRequerida * cantidadEquipos;
 
             if (sku && totalFila > 0) {
@@ -97,18 +102,22 @@ export default async function handler(req, res) {
 
         const arrayConsolidado = Object.values(consolidado);
 
-        // 7. Escritura Rápida en Vercel (Promise.all) en el tablero LISTAS (18433034563)
-        // Esto inyecta todos los items en paralelo para evitar el Timeout de Vercel
+        // LOG 3: Verificar cuántos quedaron después de multiplicar y agrupar
+        console.log(`---> Artículos listos para inyectar en LISTAS: ${arrayConsolidado.length}`);
+
+        // 7. Escritura Rápida en Vercel
         const mutaciones = arrayConsolidado.map(item => {
-            // Escapamos comillas dobles en la descripción para no romper el JSON de la mutación
-            const safeDesc = item.descripcion.replace(/"/g, '\\"');
+            // Protecciones por si algún campo en Monday estaba vacío
+            const safeDesc = (item.descripcion || "").replace(/"/g, '\\"');
+            const safeFamilia = (item.familia || "").replace(/"/g, '\\"');
+            const safeUnidad = (item.unidad || "").replace(/"/g, '\\"');
 
             const mutation = `mutation {
         create_item (
           board_id: 18433034563, 
           group_id: "topics", 
           item_name: "${item.sku}", 
-          column_values: "{\\"long_text_mm7mrdaj\\": {\\"text\\": \\"${safeDesc}\\"}, \\"numeric_mm7makx4\\": ${item.cantidadTotal}, \\"text_mm7mg8bn\\": \\"${item.unidad}\\", \\"dropdown_mm7mbz7a\\": {\\"labels\\": [\\"${item.familia}\\"]}}"
+          column_values: "{\\"long_text_mm7mrdaj\\": {\\"text\\": \\"${safeDesc}\\"}, \\"numeric_mm7makx4\\": ${item.cantidadTotal}, \\"text_mm7mg8bn\\": \\"${safeUnidad}\\", \\"dropdown_mm7mbz7a\\": {\\"labels\\": [\\"${safeFamilia}\\"]}}"
         ) { id }
       }`;
             return fetchMonday(mutation);
@@ -116,11 +125,13 @@ export default async function handler(req, res) {
 
         await Promise.all(mutaciones);
 
+        console.log(`---> ¡Éxito! Inyectados ${mutaciones.length} artículos en Monday.`);
+
         // 8. Responder a Monday que todo finalizó con éxito
         return res.status(200).json({ success: true, procesados: arrayConsolidado.length });
 
     } catch (error) {
-        console.error("Error procesando BOM:", error);
+        console.error("---> Error crítico procesando BOM:", error);
         return res.status(500).json({ error: error.message });
     }
 }
