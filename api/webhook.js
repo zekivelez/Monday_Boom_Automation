@@ -3,7 +3,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    // 1. Verificación inicial de handshake de Monday (Challenge)
+    // 1. Verificación de handshake de Monday (Challenge)
     if (req.body && req.body.challenge) {
         return res.status(200).json({ challenge: req.body.challenge });
     }
@@ -13,9 +13,9 @@ export default async function handler(req, res) {
         return res.status(200).json({ message: 'Sin evento en el body' });
     }
 
-    console.log(`[Webhook Evento Recibido]: tipo="${event.type}", pulseId="${event.pulseId || event.itemId}"`);
-
     const pulseId = event.pulseId || event.itemId;
+    console.log(`[Webhook Evento Recibido]: tipo="${event.type}", pulseId="${pulseId}"`);
+
     if (!pulseId) {
         console.warn("Evento recibido sin pulseId:", JSON.stringify(event));
         return res.status(200).json({ message: 'Ignorado: sin pulseId' });
@@ -44,82 +44,105 @@ export default async function handler(req, res) {
         return result;
     };
 
+    // Funciones auxiliares de extracción de datos de columnas
+    const extractColText = (col) => {
+        if (!col) return "";
+        if (col.display_value && String(col.display_value).trim() !== "") {
+            return String(col.display_value).trim();
+        }
+        if (col.text && String(col.text).trim() !== "") {
+            return String(col.text).trim();
+        }
+        if (col.linked_items && col.linked_items.length > 0) {
+            return col.linked_items.map(li => li.name).filter(Boolean).join(", ");
+        }
+        if (col.value) {
+            try {
+                const v = JSON.parse(col.value);
+                if (typeof v === 'string' || typeof v === 'number') return String(v).trim();
+                if (v && typeof v === 'object') {
+                    if (v.text) return String(v.text).trim();
+                    if (v.label) return String(v.label).trim();
+                    if (Array.isArray(v.labels)) return v.labels.join(", ").trim();
+                    if (v.item_ids && Array.isArray(v.item_ids)) return v.item_ids.join(", ");
+                }
+            } catch {}
+        }
+        return "";
+    };
+
+    const extractColNumber = (col, defaultVal = 0) => {
+        if (!col) return defaultVal;
+        const txt = extractColText(col);
+        if (!txt) return defaultVal;
+        const clean = txt.replace(/[^0-9.-]/g, "");
+        const num = parseFloat(clean);
+        return isNaN(num) ? defaultVal : num;
+    };
+
+    const cleanStr = (s) => (s || "").toLowerCase().trim();
+
     try {
-        // 1. Obtener la orden de PRUEBAS API (18433030481)
+        // =========================================================================
+        // PASO 1: Leer la orden detonadora en PRUEBA API (18433030481)
+        // =========================================================================
+        console.log(`[Paso 1]: Consultando PRUEBA API para el ítem ${pulseId}...`);
         const queryGenerador = `query ($itemId: [ID!]) {
             items (ids: $itemId) {
                 id
                 name
-                column_values (ids: ["numeric_mm7m4t8r", "dropdown_mm7mhnmc"]) {
+                column_values {
                     id
                     text
                     value
+                    type
                 }
             }
         }`;
+
         const resGenerador = await fetchMonday(queryGenerador, { itemId: [pulseId] });
         const generadorItem = resGenerador.data?.items?.[0];
-        const orderName = generadorItem?.name || `Orden #${pulseId}`;
-        const colCantidad = generadorItem?.column_values?.find(c => c.id === "numeric_mm7m4t8r");
-        const colProducto = generadorItem?.column_values?.find(c => c.id === "dropdown_mm7mhnmc");
-        
-        const productoSeleccionado = colProducto?.text || "";
-
-        let cantidadEquipos = 1;
-        if (colCantidad?.text && !isNaN(Number(colCantidad.text))) {
-            cantidadEquipos = Number(colCantidad.text);
-        } else if (colCantidad?.value) {
-            try {
-                const parsed = Number(JSON.parse(colCantidad.value));
-                if (!isNaN(parsed) && parsed > 0) cantidadEquipos = parsed;
-            } catch {
-                const parsed = Number(colCantidad.value);
-                if (!isNaN(parsed) && parsed > 0) cantidadEquipos = parsed;
-            }
+        if (!generadorItem) {
+            throw new Error(`No se encontró el ítem con id ${pulseId} en PRUEBA API`);
         }
-        console.log(`[Item Disparador ${pulseId}]: Orden="${orderName}", Producto="${productoSeleccionado}", Cantidad=${cantidadEquipos}`);
 
-        // 2. Extraer del BOM MODULAR (18432584292) con soporte profundo para MirrorValue y BoardRelationValue
+        const orderName = generadorItem.name || `Orden #${pulseId}`;
+        const genCols = generadorItem.column_values || [];
+        const colCantidad = genCols.find(c => c.id === "numeric_mm7m4t8r");
+        const colProducto = genCols.find(c => c.id === "dropdown_mm7mhnmc");
+        const colConfiguracion = genCols.find(c => c.id === "dropdown_mm7mqdtg");
+
+        const productoSeleccionado = extractColText(colProducto);
+        const configuracionSeleccionada = extractColText(colConfiguracion);
+        let cantidadEquipos = extractColNumber(colCantidad, 1);
+        if (cantidadEquipos <= 0) cantidadEquipos = 1;
+
+        console.log(`[PRUEBA API]: Orden="${orderName}", Producto="${productoSeleccionado}", Config="${configuracionSeleccionada}", Cantidad=${cantidadEquipos}`);
+
+        // =========================================================================
+        // PASO 2: Consultar BOM MODULAR (18432584292) y sus subelementos
+        // =========================================================================
+        console.log(`[Paso 2]: Consultando BOM MODULAR (18432584292)...`);
         const queryBOM = `query {
             boards(ids: [18432584292]) {
-                items_page(limit: 500) {
+                items_page(limit: 100) {
                     items {
                         id
                         name
-                        column_values(ids: [
-                            "lookup_mm7h5phh",
-                            "lookup_mm7gfk5t",
-                            "lookup_mm7g5ww3",
-                            "lookup_mm7g98np",
-                            "numeric_mm7hhd25",
-                            "board_relation_mm7gch9y",
-                            "dropdown_mm7h5xq1"
-                        ]) {
+                        column_values {
                             id
                             text
                             value
-                            ... on MirrorValue {
-                                display_value
-                                mirrored_items {
-                                    linked_item {
-                                        id
-                                        name
-                                    }
-                                    mirrored_value {
-                                        ... on TextValue { text }
-                                        ... on LongTextValue { text }
-                                        ... on NumbersValue { number text }
-                                        ... on StatusValue { label }
-                                        ... on DropdownValue { values { label } }
-                                    }
-                                }
-                            }
-                            ... on BoardRelationValue {
-                                display_value
-                                linked_items {
-                                    id
-                                    name
-                                }
+                            type
+                        }
+                        subitems {
+                            id
+                            name
+                            column_values {
+                                id
+                                text
+                                value
+                                type
                             }
                         }
                     }
@@ -129,176 +152,270 @@ export default async function handler(req, res) {
 
         const resBOM = await fetchMonday(queryBOM);
         const itemsBOM = resBOM.data?.boards?.[0]?.items_page?.items || [];
-        console.log(`[BOM MODULAR]: Leídas ${itemsBOM.length} filas del BOM`);
+        console.log(`[BOM MODULAR]: ${itemsBOM.length} productos/filas encontradas`);
 
-        // Extractor inteligente que maneja tanto display_value como mirrored_items y board_relation
-        const extractVal = (col) => {
-            if (!col) return "";
+        // Encontrar la fila del producto en BOM MODULAR
+        const targetProd = cleanStr(productoSeleccionado);
+        const targetConf = cleanStr(configuracionSeleccionada);
 
-            // 1. Extraer desde mirrored_items si es Mirror
-            if (col.mirrored_items && col.mirrored_items.length > 0) {
-                const vals = col.mirrored_items.map(m => {
-                    const mv = m.mirrored_value;
-                    if (!mv) return m.linked_item?.name || "";
-                    if (mv.text !== undefined && mv.text !== null && mv.text !== "") return String(mv.text);
-                    if (mv.label !== undefined && mv.label !== null && mv.label !== "") return String(mv.label);
-                    if (mv.number !== undefined && mv.number !== null) return String(mv.number);
-                    if (mv.values && Array.isArray(mv.values)) return mv.values.map(v => v.label).join(", ");
-                    return m.linked_item?.name || "";
-                }).filter(Boolean);
-                if (vals.length > 0) return vals.join(", ").trim();
-            }
-
-            // 2. Extraer desde linked_items si es BoardRelation
-            if (col.linked_items && col.linked_items.length > 0) {
-                const names = col.linked_items.map(li => li.name).filter(Boolean);
-                if (names.length > 0) return names.join(", ").trim();
-            }
-
-            // 3. display_value
-            if (col.display_value && String(col.display_value).trim() !== "") {
-                return String(col.display_value).trim();
-            }
-
-            // 4. text
-            if (col.text && String(col.text).trim() !== "") {
-                return String(col.text).trim();
-            }
-
-            // 5. value (JSON string)
-            if (col.value) {
-                try {
-                    const v = JSON.parse(col.value);
-                    if (typeof v === 'string' || typeof v === 'number') return String(v).trim();
-                    if (v && typeof v === 'object') {
-                        if (v.text) return String(v.text).trim();
-                        if (v.label) return String(v.label).trim();
-                    }
-                } catch {
-                    return String(col.value).trim();
-                }
-            }
-
-            return "";
-        };
-
-        let consolidado = {};
-
-        itemsBOM.forEach(item => {
-            const cols = item.column_values || [];
-
-            // Si hay un producto seleccionado en la orden, filtrar si la fila especifica otro producto
-            const itemProducto = extractVal(cols.find(c => c.id === "dropdown_mm7h5xq1"));
-            if (productoSeleccionado && itemProducto && itemProducto.toLowerCase() !== productoSeleccionado.toLowerCase()) {
-                return;
-            }
-
-            // Nombre del artículo vinculado en la columna ARTICULOS
-            const articuloRelacionado = extractVal(cols.find(c => c.id === "board_relation_mm7gch9y"));
-            
-            // SKU o Código del artículo: Espejo ITEM o Nombre en ARTICULOS
-            const itemMirror = extractVal(cols.find(c => c.id === "lookup_mm7h5phh"));
-            const sku = itemMirror || articuloRelacionado || item.name;
-
-            const descripcion = extractVal(cols.find(c => c.id === "lookup_mm7gfk5t"));
-            const familia = extractVal(cols.find(c => c.id === "lookup_mm7g5ww3"));
-            const unidad = extractVal(cols.find(c => c.id === "lookup_mm7g98np"));
-
-            const reqStr = extractVal(cols.find(c => c.id === "numeric_mm7hhd25"));
-            const cantidadRequerida = reqStr ? parseFloat(reqStr.replace(/,/g, "")) : 0;
-            const totalFila = cantidadRequerida * cantidadEquipos;
-
-            if (sku && totalFila > 0) {
-                if (consolidado[sku]) {
-                    consolidado[sku].cantidadTotal += totalFila;
-                    if (!consolidado[sku].descripcion && descripcion) consolidado[sku].descripcion = descripcion;
-                    if (!consolidado[sku].familia && familia) consolidado[sku].familia = familia;
-                    if (!consolidado[sku].unidad && unidad) consolidado[sku].unidad = unidad;
-                } else {
-                    consolidado[sku] = {
-                        sku,
-                        descripcion,
-                        familia,
-                        unidad,
-                        cantidadRequerida,
-                        cantidadTotal: totalFila
-                    };
-                }
-            }
+        let bomItem = itemsBOM.find(item => {
+            const iName = cleanStr(item.name);
+            const iConf = cleanStr(extractColText(item.column_values?.find(c => c.id === "dropdown_mm7ht1rb")));
+            const prodMatch = !targetProd || iName.includes(targetProd) || targetProd.includes(iName);
+            const confMatch = !targetConf || iConf.includes(targetConf) || targetConf.includes(iConf);
+            return prodMatch && confMatch;
         });
 
-        const arrayConsolidado = Object.values(consolidado);
-        console.log(`[Consolidación]: ${arrayConsolidado.length} artículos únicos calculados para LISTAS`);
+        if (!bomItem && targetProd) {
+            bomItem = itemsBOM.find(item => cleanStr(item.name).includes(targetProd) || targetProd.includes(cleanStr(item.name)));
+        }
+        if (!bomItem && itemsBOM.length > 0) {
+            bomItem = itemsBOM[0];
+            console.warn(`[BOM MODULAR]: No hubo coincidencia exacta para "${productoSeleccionado}". Usando ítem por defecto: "${bomItem.name}"`);
+        }
 
-        // 3. Crear artículos en LISTAS (18433034563)
-        const mutationQuery = `mutation ($boardId: ID!, $groupId: String, $itemName: String!, $columnValues: JSON!) {
-            create_item (
-                board_id: $boardId, 
-                group_id: $groupId,
-                item_name: $itemName, 
-                column_values: $columnValues
-            ) { id }
+        if (!bomItem) {
+            throw new Error(`No se encontró ninguna configuración en BOM MODULAR para el producto ${productoSeleccionado}`);
+        }
+
+        console.log(`[BOM MODULAR]: Ítem seleccionado -> "${bomItem.name}" (ID: ${bomItem.id})`);
+
+        // Extraer Módulos desde subelementos de BOM MODULAR
+        let modulosRequeridos = [];
+        if (bomItem.subitems && bomItem.subitems.length > 0) {
+            console.log(`[BOM MODULAR]: Encontrados ${bomItem.subitems.length} módulos en subelementos.`);
+            modulosRequeridos = bomItem.subitems.map(sub => {
+                const subCols = sub.column_values || [];
+                const cant = extractColNumber(subCols.find(c => c.id === "numeric_mm7gwjyz" || c.id === "numeric_mm7hhd25" || c.type === "numbers"), 1);
+                const codigo = extractColText(subCols.find(c => c.id === "text_mm7q8m7r")) || sub.name;
+                return {
+                    id: sub.id,
+                    name: sub.name,
+                    codigo,
+                    cantidad: cant > 0 ? cant : 1
+                };
+            });
+        } else {
+            // Respaldo: Revisar columnas de sistemas si no tuviera subelementos cargados
+            console.log(`[BOM MODULAR]: Sin subelementos directos, revisando columnas de subsistemas...`);
+            const systemColIds = [
+                "text_mm7q7qmg", "text_mm7q6xes", "text_mm7qrxyp", "text_mm7qfs6e",
+                "text_mm7qc3tv", "text_mm7q1ef3", "text_mm7qqrdg", "text_mm7qfrem",
+                "text_mm7q4589", "text_mm7qncwp", "text_mm7qxdxh", "text_mm7qqn7",
+                "text_mm7qpawg", "text_mm7qm3r3", "text_mm7q1ptq"
+            ];
+            (bomItem.column_values || []).forEach(col => {
+                if (systemColIds.includes(col.id)) {
+                    const val = extractColText(col);
+                    if (val) {
+                        modulosRequeridos.push({
+                            id: null,
+                            name: val,
+                            codigo: val,
+                            cantidad: 1
+                        });
+                    }
+                }
+            });
+        }
+
+        console.log(`[Módulos Requeridos]: ${modulosRequeridos.length} módulos identificados:`, modulosRequeridos.map(m => `${m.name} (x${m.cantidad})`).join(", "));
+
+        // =========================================================================
+        // PASO 3: Consultar Tablero MODULOS (18432845727) y sus Subelementos
+        // =========================================================================
+        console.log(`[Paso 3]: Consultando Tablero MODULOS (18432845727)...`);
+        const queryModulos = `query {
+            boards(ids: [18432845727]) {
+                items_page(limit: 300) {
+                    items {
+                        id
+                        name
+                        column_values {
+                            id
+                            text
+                            value
+                            type
+                            ... on BoardRelationValue {
+                                linked_item_ids
+                                linked_items { id name }
+                            }
+                        }
+                        subitems {
+                            id
+                            name
+                            column_values {
+                                id
+                                text
+                                value
+                                type
+                                ... on BoardRelationValue {
+                                    linked_item_ids
+                                    linked_items { id name }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }`;
 
-        const batchSize = 5;
-        let resultados = [];
+        const resModulos = await fetchMonday(queryModulos);
+        const allModulosItems = resModulos.data?.boards?.[0]?.items_page?.items || [];
+        console.log(`[MODULOS]: ${allModulosItems.length} módulos disponibles en el catálogo`);
 
-        for (let i = 0; i < arrayConsolidado.length; i += batchSize) {
-            const batch = arrayConsolidado.slice(i, i + batchSize);
-            const batchPromises = batch.map(item => {
-                let colVals = {
-                    "numeric_mm7makx4": Number(item.cantidadTotal.toFixed(4)).toString()
-                };
-
-                if (item.descripcion) colVals["long_text_mm7mrdaj"] = { text: item.descripcion };
-                if (item.unidad) colVals["text_mm7mg8bn"] = item.unidad;
-                if (item.familia) colVals["dropdown_mm7mbz7a"] = { labels: [item.familia] };
-                if (pulseId) colVals["board_relation_mm7me5ha"] = { item_ids: [Number(pulseId)] };
-
-                return fetchMonday(mutationQuery, {
-                    boardId: "18433034563",
-                    groupId: "topics",
-                    itemName: String(item.sku),
-                    columnValues: JSON.stringify(colVals)
-                });
-            });
-
-            const batchResults = await Promise.all(batchPromises);
-            resultados = resultados.concat(batchResults);
-        }
-
-        const errores = resultados.filter(r => r.errors);
-        if (errores.length > 0) {
-            console.error(`[Inyección LISTAS]: ${errores.length} mutaciones tuvieron errores.`);
-        }
-
-        // 4. Generar Documento PDF de la Lista de Materiales
-        let pdfSubido = false;
-        try {
-            console.log("[PDF]: Iniciando generación del documento PDF...");
-            const pdfBytes = await generateBOMPdf({
-                orderName,
-                producto: productoSeleccionado,
-                cantidadEquipos,
-                items: arrayConsolidado
-            });
-
-            console.log(`[PDF]: Generado con éxito (${pdfBytes.length} bytes). Subiendo a Monday...`);
-            const uploadRes = await uploadPdfToMonday(pulseId, token, pdfBytes, `BOM_${orderName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`);
-            if (uploadRes && !uploadRes.errors) {
-                pdfSubido = true;
-                console.log("[PDF]: Documento PDF subido exitosamente a la columna file_mm7m2b35");
+        // =========================================================================
+        // PASO 4: Consultar Tablero SUBMODULOS (18432844380) y sus Subelementos (Materiales)
+        // =========================================================================
+        console.log(`[Paso 4]: Consultando Tablero SUBMODULOS (18432844380)...`);
+        const querySubmodulos = `query {
+            boards(ids: [18432844380]) {
+                items_page(limit: 500) {
+                    items {
+                        id
+                        name
+                        column_values {
+                            id
+                            text
+                            value
+                            type
+                            ... on MirrorValue {
+                                display_value
+                            }
+                        }
+                        subitems {
+                            id
+                            name
+                            column_values {
+                                id
+                                text
+                                value
+                                type
+                                ... on MirrorValue {
+                                    display_value
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        } catch (pdfError) {
-            console.error("[PDF Error]: No se pudo generar o subir el PDF:", pdfError);
+        }`;
+
+        const resSubmodulos = await fetchMonday(querySubmodulos);
+        const allSubmodulosItems = resSubmodulos.data?.boards?.[0]?.items_page?.items || [];
+        console.log(`[SUBMODULOS]: ${allSubmodulosItems.length} submódulos disponibles en el catálogo`);
+
+        // Indexar submódulos por ID y por nombre normalizado para búsqueda ultra rápida
+        const submodulosMapById = new Map();
+        const submodulosMapByName = new Map();
+        allSubmodulosItems.forEach(item => {
+            submodulosMapById.set(String(item.id), item);
+            submodulosMapByName.set(cleanStr(item.name), item);
+            const codigoSub = extractColText(item.column_values?.find(c => c.id === "text_mm7jphz6"));
+            if (codigoSub) submodulosMapByName.set(cleanStr(codigoSub), item);
+        });
+
+        // =========================================================================
+        // PASO 5: Construir Jerarquía: Módulos -> Submódulos -> Materiales / Piezas
+        // =========================================================================
+        const jerarquia = [];
+        const consolidadoMateriales = {};
+
+        for (const reqMod of modulosRequeridos) {
+            const cleanModName = cleanStr(reqMod.name);
+            const cleanModCod = cleanStr(reqMod.codigo);
+
+            // Localizar el módulo en el tablero MODULOS
+            const moduloItem = allModulosItems.find(m => {
+                const mName = cleanStr(m.name);
+                return mName === cleanModName || mName === cleanModCod || mName.includes(cleanModName) || cleanModName.includes(mName);
+            });
+
+            const modObj = {
+                nombre: reqMod.name,
+                codigo: reqMod.codigo || reqMod.name,
+                cantidadModulo: reqMod.cantidad,
+                submodulos: []
+            };
+
+            if (moduloItem) {
+                // Caso A: El módulo tiene SUBELEMENTOS (cada subelemento es un Submódulo)
+                if (moduloItem.subitems && moduloItem.subitems.length > 0) {
+                    for (const subItem of moduloItem.subitems) {
+                        const subCols = subItem.column_values || [];
+                        const cantSub = extractColNumber(subCols.find(c => c.id === "numeric_mm7j6c8r" || c.type === "numbers"), 1);
+
+                        // Buscar relación hacia SUBMODULOS o empatar por nombre
+                        const relCol = subCols.find(c => c.id === "board_relation_mm7j1vcf" || c.type === "board_relation");
+                        const linkedId = relCol?.linked_item_ids?.[0];
+
+                        let matchedSub = linkedId ? submodulosMapById.get(String(linkedId)) : null;
+                        if (!matchedSub) {
+                            matchedSub = submodulosMapByName.get(cleanStr(subItem.name));
+                        }
+
+                        const subObj = procesarSubmodulo(matchedSub, subItem.name, cantSub, reqMod.cantidad, cantidadEquipos, consolidadoMateriales);
+                        modObj.submodulos.push(subObj);
+                    }
+                } 
+                // Caso B: El módulo tiene la columna de relación SUBMODULO directamente en sus columnas principales
+                else {
+                    const relCol = moduloItem.column_values?.find(c => c.id === "board_relation_mm7j1vcf");
+                    const cantSub = extractColNumber(moduloItem.column_values?.find(c => c.id === "numeric_mm7j6c8r"), 1);
+                    const linkedIds = relCol?.linked_item_ids || [];
+
+                    if (linkedIds.length > 0) {
+                        for (const lid of linkedIds) {
+                            const matchedSub = submodulosMapById.get(String(lid));
+                            const subName = matchedSub?.name || `Submódulo #${lid}`;
+                            const subObj = procesarSubmodulo(matchedSub, subName, cantSub, reqMod.cantidad, cantidadEquipos, consolidadoMateriales);
+                            modObj.submodulos.push(subObj);
+                        }
+                    } else if (relCol?.linked_items && relCol.linked_items.length > 0) {
+                        for (const li of relCol.linked_items) {
+                            const matchedSub = submodulosMapById.get(String(li.id)) || submodulosMapByName.get(cleanStr(li.name));
+                            const subObj = procesarSubmodulo(matchedSub, li.name, cantSub, reqMod.cantidad, cantidadEquipos, consolidadoMateriales);
+                            modObj.submodulos.push(subObj);
+                        }
+                    }
+                }
+            } else {
+                console.warn(`[Aviso]: No se encontró el módulo "${reqMod.name}" en el tablero MODULOS.`);
+            }
+
+            jerarquia.push(modObj);
         }
+
+        // =========================================================================
+        // PASO 6: Generar y Subir el PDF Oficial de Producción
+        // =========================================================================
+        console.log("[Paso 6]: Generando documento PDF corporativo con desglose completo...");
+        const arrayConsolidado = Object.values(consolidadoMateriales);
+
+        const pdfBytes = await generateDetailedBOMPdf({
+            orderName,
+            producto: productoSeleccionado,
+            configuracion: configuracionSeleccionada,
+            cantidadEquipos,
+            jerarquia,
+            consolidado: arrayConsolidado
+        });
+
+        console.log(`[PDF]: Generado con éxito (${pdfBytes.length} bytes). Subiendo a PRUEBA API (file_mm7m2b35)...`);
+        const safeOrderFile = orderName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const uploadRes = await uploadPdfToMonday(pulseId, token, pdfBytes, `BOM_${safeOrderFile}.pdf`);
+
+        const pdfSubido = Boolean(uploadRes && !uploadRes.errors);
+        console.log(`[PDF]: Resultado de subida: ${pdfSubido ? 'EXITOSO' : 'FALLIDO'}`);
 
         return res.status(200).json({
             success: true,
             orden: orderName,
+            producto: productoSeleccionado,
+            configuracion: configuracionSeleccionada,
             cantidadEquipos,
-            procesados: arrayConsolidado.length,
-            errores: errores.length,
+            modulosProcesados: jerarquia.length,
+            materialesTotales: arrayConsolidado.length,
             pdfGenerado: pdfSubido
         });
 
@@ -308,7 +425,65 @@ export default async function handler(req, res) {
     }
 }
 
-// Función auxiliar para subir el archivo a la columna de Monday (file_mm7m2b35)
+// Función auxiliar para procesar los subelementos (materiales) de un submódulo
+function procesarSubmodulo(submoduloItem, fallbackName, cantSub, cantMod, cantEquipos, consolidado) {
+    const subName = submoduloItem?.name || fallbackName;
+    const subCols = submoduloItem?.column_values || [];
+    const codigoSub = subCols.find(c => c.id === "text_mm7jphz6")?.text || "";
+
+    const subObj = {
+        nombre: subName,
+        codigo: codigoSub || subName,
+        cantidadSubmodulo: cantSub > 0 ? cantSub : 1,
+        materiales: []
+    };
+
+    if (submoduloItem?.subitems && submoduloItem.subitems.length > 0) {
+        for (const matItem of submoduloItem.subitems) {
+            const mCols = matItem.column_values || [];
+            
+            // Buscar cantidad unitaria del material
+            let cantUnit = 1;
+            const numCol = mCols.find(c => c.type === "numbers" || c.id?.includes("cant") || c.id?.includes("numeric"));
+            if (numCol?.text && !isNaN(parseFloat(numCol.text))) {
+                cantUnit = parseFloat(numCol.text);
+            }
+
+            // Buscar unidad de medida y código/sku
+            const umCol = mCols.find(c => c.id?.includes("unidad") || c.id?.includes("medida") || c.type === "text" || c.type === "dropdown");
+            const unidad = umCol?.text || "PZA";
+            const sku = matItem.name;
+
+            const totalMat = cantUnit * subObj.cantidadSubmodulo * cantMod * cantEquipos;
+
+            const matObj = {
+                sku,
+                nombre: matItem.name,
+                unidad,
+                cantUnitaria: cantUnit,
+                cantTotal: totalMat
+            };
+
+            subObj.materiales.push(matObj);
+
+            // Acumular en el consolidado general
+            if (consolidado[sku]) {
+                consolidado[sku].cantTotal += totalMat;
+            } else {
+                consolidado[sku] = {
+                    sku,
+                    nombre: matItem.name,
+                    unidad,
+                    cantTotal: totalMat
+                };
+            }
+        }
+    }
+
+    return subObj;
+}
+
+// Función para subir el PDF generado a la columna de Monday (file_mm7m2b35)
 async function uploadPdfToMonday(itemId, token, pdfBytes, fileName) {
     const form = new FormData();
     const mutation = `mutation ($file: File!) {
@@ -341,90 +516,29 @@ async function uploadPdfToMonday(itemId, token, pdfBytes, fileName) {
     return result;
 }
 
-// Función para diseñar y generar el PDF con pdf-lib
-async function generateBOMPdf({ orderName, producto, cantidadEquipos, items }) {
+// Generador de PDF elegante con desglose jerárquico completo
+async function generateDetailedBOMPdf({ orderName, producto, configuracion, cantidadEquipos, jerarquia, consolidado }) {
     const pdfDoc = await PDFDocument.create();
-    let page = pdfDoc.addPage([612, 792]); // Tamaño Carta estándar
+    let page = pdfDoc.addPage([612, 792]); // Carta Estándar
     const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
     const { width, height } = page.getSize();
-    let y = height - 40;
+    let y = height - 35;
 
-    const primaryColor = rgb(0.1, 0.22, 0.44); // Azul Transtools
-    const textColor = rgb(0.15, 0.15, 0.15);
-    const headerBg = rgb(0.92, 0.94, 0.98);
-    const borderColor = rgb(0.82, 0.85, 0.9);
+    const primaryColor = rgb(0.08, 0.2, 0.42);   // Azul Corporativo Transtools
+    const secondaryColor = rgb(0.18, 0.35, 0.65);
+    const darkGray = rgb(0.2, 0.2, 0.2);
+    const lightGray = rgb(0.94, 0.95, 0.97);
+    const borderColor = rgb(0.8, 0.83, 0.88);
 
-    // Encabezado corporativo
-    page.drawRectangle({
-        x: 35,
-        y: y - 8,
-        width: width - 70,
-        height: 38,
-        color: primaryColor,
-    });
-
-    page.drawText("TRANSTOOLS - EXPLOSIÓN DE MATERIALES (BOM)", {
-        x: 48,
-        y: y + 8,
-        size: 13,
-        font: fontBold,
-        color: rgb(1, 1, 1),
-    });
-
-    y -= 46;
-
-    // Resumen de la Orden
-    page.drawText(`Orden: ${orderName}`, { x: 38, y, size: 9.5, font: fontBold, color: textColor });
-    page.drawText(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, { x: width - 160, y, size: 9, font: fontRegular, color: textColor });
-    y -= 15;
-
-    if (producto) {
-        page.drawText(`Producto: ${producto}`, { x: 38, y, size: 9, font: fontRegular, color: textColor });
-    }
-    page.drawText(`Cantidad a Fabricar: ${cantidadEquipos}`, { x: width - 210, y, size: 9.5, font: fontBold, color: primaryColor });
-    y -= 25;
-
-    // Definición de columnas
-    // Ancho útil = width - 70 = 542
-    const cols = [
-        { label: "ARTÍCULO / SKU", x: 35, width: 110 },
-        { label: "DESCRIPCIÓN TÉCNICA", x: 145, width: 185 },
-        { label: "FAMILIA", x: 330, width: 85 },
-        { label: "U.M.", x: 415, width: 45 },
-        { label: "CANT. TOTAL", x: 460, width: 82, align: 'right' },
-    ];
-
-    const drawTableHeader = (curY) => {
-        page.drawRectangle({
-            x: 35,
-            y: curY - 5,
-            width: width - 70,
-            height: 20,
-            color: headerBg,
-            borderColor: borderColor,
-            borderWidth: 0.5,
-        });
-
-        cols.forEach(c => {
-            const textWidth = fontBold.widthOfTextAtSize(c.label, 8);
-            const posX = c.align === 'right' ? c.x + c.width - textWidth - 5 : c.x + 5;
-            page.drawText(c.label, {
-                x: posX,
-                y: curY,
-                size: 8,
-                font: fontBold,
-                color: primaryColor,
-            });
-        });
+    const safeText = (text) => {
+        if (!text) return "";
+        return String(text).replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
     };
 
-    drawTableHeader(y);
-    y -= 20;
-
     const truncate = (text, maxWidth, font, size) => {
-        let str = String(text || '');
+        let str = safeText(text);
         if (font.widthOfTextAtSize(str, size) <= maxWidth) return str;
         while (str.length > 0 && font.widthOfTextAtSize(str + '...', size) > maxWidth) {
             str = str.slice(0, -1);
@@ -432,60 +546,224 @@ async function generateBOMPdf({ orderName, producto, cantidadEquipos, items }) {
         return str + '...';
     };
 
-    items.forEach((item, index) => {
-        if (y < 55) {
-            page = pdfDoc.addPage([612, 792]);
-            y = 745;
-            drawTableHeader(y);
-            y -= 20;
-        }
-
-        if (index % 2 === 1) {
-            page.drawRectangle({
-                x: 35,
-                y: y - 4,
-                width: width - 70,
-                height: 16,
-                color: rgb(0.98, 0.98, 0.99),
-            });
-        }
-
-        page.drawLine({
-            start: { x: 35, y: y - 4 },
-            end: { x: width - 35, y: y - 4 },
-            color: borderColor,
-            thickness: 0.5,
+    const drawHeader = () => {
+        page.drawRectangle({
+            x: 35,
+            y: y - 5,
+            width: width - 70,
+            height: 36,
+            color: primaryColor
         });
 
-        const skuText = truncate(item.sku, cols[0].width - 8, fontBold, 8);
-        const descText = truncate(item.descripcion, cols[1].width - 8, fontRegular, 7.5);
-        const famText = truncate(item.familia, cols[2].width - 8, fontRegular, 7.5);
-        const umText = truncate(item.unidad, cols[3].width - 8, fontRegular, 8);
-        const qtyText = item.cantidadTotal.toLocaleString('es-MX', { maximumFractionDigits: 4 });
+        page.drawText("TRANSTOOLS - EXPLOSIÓN DE MATERIALES (BOM MODULAR)", {
+            x: 48,
+            y: y + 9,
+            size: 11.5,
+            font: fontBold,
+            color: rgb(1, 1, 1)
+        });
 
-        page.drawText(skuText, { x: cols[0].x + 5, y, size: 8, font: fontBold, color: textColor });
-        page.drawText(descText, { x: cols[1].x + 5, y, size: 7.5, font: fontRegular, color: textColor });
-        page.drawText(famText, { x: cols[2].x + 5, y, size: 7.5, font: fontRegular, color: textColor });
-        page.drawText(umText, { x: cols[3].x + 5, y, size: 8, font: fontRegular, color: textColor });
+        y -= 42;
 
-        const qtyWidth = fontBold.widthOfTextAtSize(qtyText, 8);
-        page.drawText(qtyText, { x: cols[4].x + cols[4].width - qtyWidth - 5, y, size: 8, font: fontBold, color: primaryColor });
+        // Fila de metadatos
+        page.drawText(`Orden: ${safeText(orderName)}`, { x: 38, y, size: 9, font: fontBold, color: darkGray });
+        page.drawText(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, { x: width - 150, y, size: 8.5, font: fontRegular, color: darkGray });
+        y -= 14;
 
-        y -= 16;
-    });
+        if (producto) {
+            page.drawText(`Producto: ${safeText(producto)}`, { x: 38, y, size: 8.5, font: fontRegular, color: darkGray });
+        }
+        if (configuracion) {
+            page.drawText(`Configuración: ${safeText(configuracion)}`, { x: 230, y, size: 8.5, font: fontRegular, color: darkGray });
+        }
+        page.drawText(`Cant. a Fabricar: ${cantidadEquipos}`, { x: width - 170, y, size: 9, font: fontBold, color: primaryColor });
+        y -= 20;
 
-    if (y < 45) {
-        page = pdfDoc.addPage([612, 792]);
-        y = 745;
+        page.drawLine({
+            start: { x: 35, y },
+            end: { x: width - 35, y },
+            color: borderColor,
+            thickness: 0.8
+        });
+        y -= 15;
+    };
+
+    drawHeader();
+
+    // =========================================================================
+    // SECCIÓN 1: Desglose Jerárquico (Módulos -> Submódulos -> Materiales)
+    // =========================================================================
+    for (const mod of jerarquia) {
+        if (y < 80) {
+            page = pdfDoc.addPage([612, 792]);
+            y = 750;
+            drawHeader();
+        }
+
+        // Barra de Módulo
+        page.drawRectangle({
+            x: 35,
+            y: y - 3,
+            width: width - 70,
+            height: 18,
+            color: secondaryColor
+        });
+
+        const modTitle = `MÓDULO: ${safeText(mod.nombre)} (Cant. unitaria en equipo: ${mod.cantidadModulo})`;
+        page.drawText(modTitle, { x: 42, y: y + 2, size: 8.5, font: fontBold, color: rgb(1, 1, 1) });
+        y -= 19;
+
+        if (!mod.submodulos || mod.submodulos.length === 0) {
+            page.drawText("  (Sin submódulos o componentes registrados)", { x: 45, y, size: 7.5, font: fontRegular, color: darkGray });
+            y -= 14;
+            continue;
+        }
+
+        for (const sub of mod.submodulos) {
+            if (y < 65) {
+                page = pdfDoc.addPage([612, 792]);
+                y = 750;
+                drawHeader();
+            }
+
+            // Sub-encabezado de Submódulo
+            page.drawRectangle({
+                x: 40,
+                y: y - 2,
+                width: width - 80,
+                height: 15,
+                color: lightGray
+            });
+
+            const subTitle = `Submódulo: ${safeText(sub.nombre)} | Cant. requerida en módulo: ${sub.cantidadSubmodulo}`;
+            page.drawText(subTitle, { x: 46, y: y + 2, size: 8, font: fontBold, color: primaryColor });
+            y -= 16;
+
+            // Tabla de Materiales del Submódulo
+            if (sub.materiales && sub.materiales.length > 0) {
+                // Header tabla materiales
+                page.drawText("MATERIAL / PIEZA", { x: 45, y, size: 7, font: fontBold, color: darkGray });
+                page.drawText("U.M.", { x: 370, y, size: 7, font: fontBold, color: darkGray });
+                page.drawText("CANT. UNIT.", { x: 420, y, size: 7, font: fontBold, color: darkGray });
+                page.drawText("CANT. TOTAL", { x: 490, y, size: 7, font: fontBold, color: primaryColor });
+                y -= 10;
+
+                sub.materiales.forEach((mat) => {
+                    if (y < 45) {
+                        page = pdfDoc.addPage([612, 792]);
+                        y = 750;
+                        drawHeader();
+                    }
+
+                    const matName = truncate(mat.nombre, 310, fontRegular, 7.5);
+                    const matUm = safeText(mat.unidad);
+                    const matUnit = mat.cantUnitaria.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+                    const matTot = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+
+                    page.drawText(matName, { x: 45, y, size: 7.5, font: fontRegular, color: darkGray });
+                    page.drawText(matUm, { x: 370, y, size: 7.5, font: fontRegular, color: darkGray });
+                    page.drawText(matUnit, { x: 425, y, size: 7.5, font: fontRegular, color: darkGray });
+                    page.drawText(matTot, { x: 495, y, size: 7.5, font: fontBold, color: primaryColor });
+
+                    page.drawLine({
+                        start: { x: 40, y: y - 2 },
+                        end: { x: width - 40, y: y - 2 },
+                        color: borderColor,
+                        thickness: 0.3
+                    });
+
+                    y -= 12;
+                });
+            } else {
+                page.drawText("    (Sin materiales individuales en subelementos)", { x: 45, y, size: 7.5, font: fontRegular, color: darkGray });
+                y -= 12;
+            }
+
+            y -= 4;
+        }
+
+        y -= 6;
     }
-    y -= 10;
-    page.drawText(`Total de artículos listados: ${items.length}`, {
-        x: 38,
-        y,
-        size: 9,
-        font: fontBold,
-        color: primaryColor,
-    });
+
+    // =========================================================================
+    // SECCIÓN 2: Resumen Consolidado de Materiales (Almacén / Compras)
+    // =========================================================================
+    if (consolidado && consolidado.length > 0) {
+        if (y < 120) {
+            page = pdfDoc.addPage([612, 792]);
+            y = 750;
+            drawHeader();
+        }
+
+        y -= 10;
+        page.drawRectangle({
+            x: 35,
+            y: y - 4,
+            width: width - 70,
+            height: 20,
+            color: primaryColor
+        });
+
+        page.drawText("RESUMEN CONSOLIDADO DE MATERIALES (TOTALES DE PRODUCCIÓN)", {
+            x: 45,
+            y: y + 2,
+            size: 9,
+            font: fontBold,
+            color: rgb(1, 1, 1)
+        });
+        y -= 22;
+
+        // Encabezados del consolidado
+        page.drawRectangle({
+            x: 35,
+            y: y - 3,
+            width: width - 70,
+            height: 16,
+            color: lightGray,
+            borderColor,
+            borderWidth: 0.5
+        });
+
+        page.drawText("DESCRIPCIÓN / MATERIAL", { x: 42, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        page.drawText("U.M.", { x: 410, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        page.drawText("CANTIDAD TOTAL", { x: 470, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        y -= 18;
+
+        consolidado.forEach((item, index) => {
+            if (y < 45) {
+                page = pdfDoc.addPage([612, 792]);
+                y = 750;
+                drawHeader();
+            }
+
+            if (index % 2 === 1) {
+                page.drawRectangle({
+                    x: 35,
+                    y: y - 3,
+                    width: width - 70,
+                    height: 14,
+                    color: rgb(0.98, 0.98, 0.99)
+                });
+            }
+
+            const itemDesc = truncate(item.nombre || item.sku, 355, fontRegular, 7.5);
+            const itemUm = safeText(item.unidad || "PZA");
+            const itemTot = item.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+
+            page.drawText(itemDesc, { x: 42, y, size: 7.5, font: fontRegular, color: darkGray });
+            page.drawText(itemUm, { x: 410, y, size: 7.5, font: fontRegular, color: darkGray });
+            page.drawText(itemTot, { x: 475, y, size: 8, font: fontBold, color: primaryColor });
+
+            page.drawLine({
+                start: { x: 35, y: y - 3 },
+                end: { x: width - 35, y: y - 3 },
+                color: borderColor,
+                thickness: 0.4
+            });
+
+            y -= 14;
+        });
+    }
 
     return await pdfDoc.save();
 }
