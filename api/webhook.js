@@ -80,7 +80,17 @@ export default async function handler(req, res) {
         return isNaN(num) ? defaultVal : num;
     };
 
-    const cleanStr = (s) => (s || "").toLowerCase().trim();
+    // Normalizador integral: minúsculas, sin acentos/tildes y sin caracteres especiales
+    const normalizeStr = (s) => {
+        if (!s) return "";
+        return String(s)
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "") // elimina tildes/acentos
+            .replace(/[^a-z0-9]/g, " ")       // solo alfanumérico
+            .replace(/\s+/g, " ")
+            .trim();
+    };
 
     try {
         // =========================================================================
@@ -125,7 +135,7 @@ export default async function handler(req, res) {
         console.log(`[Paso 2]: Consultando BOM MODULAR (18432584292)...`);
         const queryBOM = `query {
             boards(ids: [18432584292]) {
-                items_page(limit: 100) {
+                items_page(limit: 200) {
                     items {
                         id
                         name
@@ -154,72 +164,81 @@ export default async function handler(req, res) {
         const itemsBOM = resBOM.data?.boards?.[0]?.items_page?.items || [];
         console.log(`[BOM MODULAR]: ${itemsBOM.length} productos/filas encontradas`);
 
-        // Encontrar la fila del producto en BOM MODULAR
-        const targetProd = cleanStr(productoSeleccionado);
-        const targetConf = cleanStr(configuracionSeleccionada);
+        const targetProd = normalizeStr(productoSeleccionado);
+        const targetConf = normalizeStr(configuracionSeleccionada);
 
-        let bomItem = itemsBOM.find(item => {
-            const iName = cleanStr(item.name);
-            const iConf = cleanStr(extractColText(item.column_values?.find(c => c.id === "dropdown_mm7ht1rb")));
-            const prodMatch = !targetProd || iName.includes(targetProd) || targetProd.includes(iName);
-            const confMatch = !targetConf || iConf.includes(targetConf) || targetConf.includes(iConf);
-            return prodMatch && confMatch;
+        console.log(`[BOM MODULAR]: Filtrando filas para Producto="${targetProd}" | Config="${targetConf}"...`);
+
+        // Encontrar TODAS las filas de BOM MODULAR que pertenecen a esta configuración o producto
+        let matchedBOMItems = itemsBOM.filter(item => {
+            const iName = normalizeStr(item.name);
+            const iConf = normalizeStr(extractColText(item.column_values?.find(c => c.id === "dropdown_mm7ht1rb")));
+
+            if (targetConf && iConf) {
+                if (iConf === targetConf || iConf.includes(targetConf) || targetConf.includes(iConf)) return true;
+            }
+            if (targetProd && iName) {
+                if (iName.includes(targetProd) || targetProd.includes(iName)) {
+                    if (!targetConf || !iConf || iConf.includes(targetConf) || targetConf.includes(iConf)) return true;
+                }
+            }
+            return false;
         });
 
-        if (!bomItem && targetProd) {
-            bomItem = itemsBOM.find(item => cleanStr(item.name).includes(targetProd) || targetProd.includes(cleanStr(item.name)));
+        // Fallbacks inteligentes
+        if (matchedBOMItems.length === 0 && targetConf) {
+            matchedBOMItems = itemsBOM.filter(item => {
+                const iConf = normalizeStr(extractColText(item.column_values?.find(c => c.id === "dropdown_mm7ht1rb")));
+                return iConf && (iConf.includes(targetConf) || targetConf.includes(iConf));
+            });
         }
-        if (!bomItem && itemsBOM.length > 0) {
-            bomItem = itemsBOM[0];
-            console.warn(`[BOM MODULAR]: No hubo coincidencia exacta para "${productoSeleccionado}". Usando ítem por defecto: "${bomItem.name}"`);
+        if (matchedBOMItems.length === 0 && targetProd) {
+            matchedBOMItems = itemsBOM.filter(item => {
+                const iName = normalizeStr(item.name);
+                return iName && (iName.includes(targetProd) || targetProd.includes(iName));
+            });
+        }
+        if (matchedBOMItems.length === 0 && itemsBOM.length > 0) {
+            matchedBOMItems = itemsBOM;
+            console.warn(`[BOM MODULAR]: Sin coincidencia exacta para los filtros. Tomando todas las filas como respaldo.`);
         }
 
-        if (!bomItem) {
-            throw new Error(`No se encontró ninguna configuración en BOM MODULAR para el producto ${productoSeleccionado}`);
-        }
+        console.log(`[BOM MODULAR]: ${matchedBOMItems.length} filas coincidentes seleccionadas.`);
 
-        console.log(`[BOM MODULAR]: Ítem seleccionado -> "${bomItem.name}" (ID: ${bomItem.id})`);
-
-        // Extraer Módulos desde subelementos de BOM MODULAR
+        // Extraer Módulos desde las filas seleccionadas de BOM MODULAR
         let modulosRequeridos = [];
-        if (bomItem.subitems && bomItem.subitems.length > 0) {
-            console.log(`[BOM MODULAR]: Encontrados ${bomItem.subitems.length} módulos en subelementos.`);
-            modulosRequeridos = bomItem.subitems.map(sub => {
-                const subCols = sub.column_values || [];
-                const cant = extractColNumber(subCols.find(c => c.id === "numeric_mm7gwjyz" || c.id === "numeric_mm7hhd25" || c.type === "numbers"), 1);
-                const codigo = extractColText(subCols.find(c => c.id === "text_mm7q8m7r")) || sub.name;
-                return {
-                    id: sub.id,
-                    name: sub.name,
-                    codigo,
-                    cantidad: cant > 0 ? cant : 1
-                };
-            });
-        } else {
-            // Respaldo: Revisar columnas de sistemas si no tuviera subelementos cargados
-            console.log(`[BOM MODULAR]: Sin subelementos directos, revisando columnas de subsistemas...`);
-            const systemColIds = [
-                "text_mm7q7qmg", "text_mm7q6xes", "text_mm7qrxyp", "text_mm7qfs6e",
-                "text_mm7qc3tv", "text_mm7q1ef3", "text_mm7qqrdg", "text_mm7qfrem",
-                "text_mm7q4589", "text_mm7qncwp", "text_mm7qxdxh", "text_mm7qqn7",
-                "text_mm7qpawg", "text_mm7qm3r3", "text_mm7q1ptq"
-            ];
-            (bomItem.column_values || []).forEach(col => {
-                if (systemColIds.includes(col.id)) {
-                    const val = extractColText(col);
-                    if (val) {
-                        modulosRequeridos.push({
-                            id: null,
-                            name: val,
-                            codigo: val,
-                            cantidad: 1
-                        });
-                    }
+        for (const bItem of matchedBOMItems) {
+            if (bItem.subitems && bItem.subitems.length > 0) {
+                for (const sub of bItem.subitems) {
+                    const subCols = sub.column_values || [];
+                    const cant = extractColNumber(subCols.find(c => c.id === "numeric_mm7gwjyz" || c.id === "numeric_mm7hhd25" || c.type === "numbers"), 1);
+                    const codigo = extractColText(subCols.find(c => c.id === "text_mm7q8m7r")) || sub.name;
+                    modulosRequeridos.push({
+                        bomItemId: bItem.id,
+                        bomItemName: bItem.name,
+                        subitemId: sub.id,
+                        name: sub.name,
+                        codigo,
+                        cantidad: cant > 0 ? cant : 1
+                    });
                 }
-            });
+            } else {
+                // Si la fila en sí misma es el módulo (ej. "SISTEMA ELECTRICO DOLLY A")
+                const bCols = bItem.column_values || [];
+                const cant = extractColNumber(bCols.find(c => c.id === "numeric_mm7gwjyz" || c.id === "numeric_mm7hhd25" || c.type === "numbers"), 1);
+                const cod = extractColText(bCols.find(c => c.id === "text_mm7q8m7r")) || bItem.name;
+                modulosRequeridos.push({
+                    bomItemId: bItem.id,
+                    bomItemName: bItem.name,
+                    subitemId: null,
+                    name: bItem.name,
+                    codigo: cod,
+                    cantidad: cant > 0 ? cant : 1
+                });
+            }
         }
 
-        console.log(`[Módulos Requeridos]: ${modulosRequeridos.length} módulos identificados:`, modulosRequeridos.map(m => `${m.name} (x${m.cantidad})`).join(", "));
+        console.log(`[Módulos Requeridos]: ${modulosRequeridos.length} módulos identificados:`, modulosRequeridos.map(m => `${m.name} (x${m.cantidad})`).join(" | "));
 
         // =========================================================================
         // PASO 3: Consultar Tablero MODULOS (18432845727) y sus Subelementos
@@ -262,7 +281,7 @@ export default async function handler(req, res) {
 
         const resModulos = await fetchMonday(queryModulos);
         const allModulosItems = resModulos.data?.boards?.[0]?.items_page?.items || [];
-        console.log(`[MODULOS]: ${allModulosItems.length} módulos disponibles en el catálogo`);
+        console.log(`[MODULOS]: ${allModulosItems.length} módulos en catálogo:`, allModulosItems.map(m => `"${m.name}"`).join(", "));
 
         // =========================================================================
         // PASO 4: Consultar Tablero SUBMODULOS (18432844380) y sus Subelementos (Materiales)
@@ -305,14 +324,14 @@ export default async function handler(req, res) {
         const allSubmodulosItems = resSubmodulos.data?.boards?.[0]?.items_page?.items || [];
         console.log(`[SUBMODULOS]: ${allSubmodulosItems.length} submódulos disponibles en el catálogo`);
 
-        // Indexar submódulos por ID y por nombre normalizado para búsqueda ultra rápida
+        // Indexar submódulos por ID y por nombre normalizado
         const submodulosMapById = new Map();
         const submodulosMapByName = new Map();
         allSubmodulosItems.forEach(item => {
             submodulosMapById.set(String(item.id), item);
-            submodulosMapByName.set(cleanStr(item.name), item);
+            submodulosMapByName.set(normalizeStr(item.name), item);
             const codigoSub = extractColText(item.column_values?.find(c => c.id === "text_mm7jphz6"));
-            if (codigoSub) submodulosMapByName.set(cleanStr(codigoSub), item);
+            if (codigoSub) submodulosMapByName.set(normalizeStr(codigoSub), item);
         });
 
         // =========================================================================
@@ -322,14 +341,42 @@ export default async function handler(req, res) {
         const consolidadoMateriales = {};
 
         for (const reqMod of modulosRequeridos) {
-            const cleanModName = cleanStr(reqMod.name);
-            const cleanModCod = cleanStr(reqMod.codigo);
+            const cleanReq = normalizeStr(reqMod.name);
+            const cleanCod = normalizeStr(reqMod.codigo);
+            const cleanBomParent = normalizeStr(reqMod.bomItemName);
 
-            // Localizar el módulo en el tablero MODULOS
-            const moduloItem = allModulosItems.find(m => {
-                const mName = cleanStr(m.name);
-                return mName === cleanModName || mName === cleanModCod || mName.includes(cleanModName) || cleanModName.includes(mName);
+            // 1. Intentar vincular por columna de relación board_relation_mm7q42s9 (BOM MODULAR)
+            let moduloItem = allModulosItems.find(m => {
+                if (!reqMod.bomItemId) return false;
+                const relCol = m.column_values?.find(c => c.id === "board_relation_mm7q42s9");
+                const linked = (relCol?.linked_item_ids || []).map(String);
+                return linked.includes(String(reqMod.bomItemId));
             });
+
+            // 2. Si no por relación, buscar por nombre normalizado / códigos / tokens
+            if (!moduloItem) {
+                moduloItem = allModulosItems.find(m => {
+                    const mNorm = normalizeStr(m.name);
+                    return mNorm === cleanReq || 
+                           mNorm === cleanCod || 
+                           mNorm === cleanBomParent ||
+                           (cleanReq && mNorm.includes(cleanReq)) || 
+                           (cleanReq && cleanReq.includes(mNorm)) ||
+                           (cleanBomParent && mNorm.includes(cleanBomParent)) ||
+                           (cleanBomParent && cleanBomParent.includes(mNorm));
+                });
+            }
+
+            // 3. Si aún no coincide, buscar por palabras clave principales (tokens)
+            if (!moduloItem) {
+                const words = cleanReq.split(" ").filter(w => w.length > 3);
+                if (words.length > 0) {
+                    moduloItem = allModulosItems.find(m => {
+                        const mNorm = normalizeStr(m.name);
+                        return words.every(w => mNorm.includes(w));
+                    });
+                }
+            }
 
             const modObj = {
                 nombre: reqMod.name,
@@ -339,7 +386,9 @@ export default async function handler(req, res) {
             };
 
             if (moduloItem) {
-                // Caso A: El módulo tiene SUBELEMENTOS (cada subelemento es un Submódulo)
+                console.log(`[MODULOS]: Módulo "${reqMod.name}" vinculado con éxito a "${moduloItem.name}" (ID: ${moduloItem.id})`);
+
+                // Caso A: El módulo tiene SUBELEMENTOS
                 if (moduloItem.subitems && moduloItem.subitems.length > 0) {
                     for (const subItem of moduloItem.subitems) {
                         const subCols = subItem.column_values || [];
@@ -351,14 +400,22 @@ export default async function handler(req, res) {
 
                         let matchedSub = linkedId ? submodulosMapById.get(String(linkedId)) : null;
                         if (!matchedSub) {
-                            matchedSub = submodulosMapByName.get(cleanStr(subItem.name));
+                            matchedSub = submodulosMapByName.get(normalizeStr(subItem.name));
+                        }
+                        if (!matchedSub) {
+                            // Búsqueda por inclusión de nombre
+                            const sNorm = normalizeStr(subItem.name);
+                            matchedSub = allSubmodulosItems.find(sm => {
+                                const smNorm = normalizeStr(sm.name);
+                                return smNorm.includes(sNorm) || sNorm.includes(smNorm);
+                            });
                         }
 
                         const subObj = procesarSubmodulo(matchedSub, subItem.name, cantSub, reqMod.cantidad, cantidadEquipos, consolidadoMateriales);
                         modObj.submodulos.push(subObj);
                     }
                 } 
-                // Caso B: El módulo tiene la columna de relación SUBMODULO directamente en sus columnas principales
+                // Caso B: El módulo tiene relación a SUBMODULOS en sus columnas principales
                 else {
                     const relCol = moduloItem.column_values?.find(c => c.id === "board_relation_mm7j1vcf");
                     const cantSub = extractColNumber(moduloItem.column_values?.find(c => c.id === "numeric_mm7j6c8r"), 1);
@@ -373,7 +430,7 @@ export default async function handler(req, res) {
                         }
                     } else if (relCol?.linked_items && relCol.linked_items.length > 0) {
                         for (const li of relCol.linked_items) {
-                            const matchedSub = submodulosMapById.get(String(li.id)) || submodulosMapByName.get(cleanStr(li.name));
+                            const matchedSub = submodulosMapById.get(String(li.id)) || submodulosMapByName.get(normalizeStr(li.name));
                             const subObj = procesarSubmodulo(matchedSub, li.name, cantSub, reqMod.cantidad, cantidadEquipos, consolidadoMateriales);
                             modObj.submodulos.push(subObj);
                         }
@@ -641,7 +698,6 @@ async function generateDetailedBOMPdf({ orderName, producto, configuracion, cant
 
             // Tabla de Materiales del Submódulo
             if (sub.materiales && sub.materiales.length > 0) {
-                // Header tabla materiales
                 page.drawText("MATERIAL / PIEZA", { x: 45, y, size: 7, font: fontBold, color: darkGray });
                 page.drawText("U.M.", { x: 370, y, size: 7, font: fontBold, color: darkGray });
                 page.drawText("CANT. UNIT.", { x: 420, y, size: 7, font: fontBold, color: darkGray });
@@ -713,7 +769,6 @@ async function generateDetailedBOMPdf({ orderName, producto, configuracion, cant
         });
         y -= 22;
 
-        // Encabezados del consolidado
         page.drawRectangle({
             x: 35,
             y: y - 3,
