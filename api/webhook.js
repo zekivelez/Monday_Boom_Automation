@@ -258,6 +258,10 @@ export default async function handler(req, res) {
                             ... on MirrorValue {
                                 display_value
                             }
+                            ... on BoardRelationValue {
+                                linked_item_ids
+                                linked_items { id name }
+                            }
                         }
                         subitems {
                             id
@@ -269,6 +273,10 @@ export default async function handler(req, res) {
                                 type
                                 ... on MirrorValue {
                                     display_value
+                                }
+                                ... on BoardRelationValue {
+                                    linked_item_ids
+                                    linked_items { id name }
                                 }
                             }
                         }
@@ -341,14 +349,49 @@ export default async function handler(req, res) {
                     const numCol = mCols.find(c => c.type === "numbers" || c.id?.includes("cant") || c.id?.includes("numeric"));
                     const umCol = mCols.find(c => c.id?.includes("unidad") || c.id?.includes("medida") || c.type === "text" || c.type === "dropdown");
 
+                    // 1. Extraer nombre del Material desde la columna de relación board_relation_mm7j1vcf
+                    const relMaterialCol = mCols.find(c => c.id === "board_relation_mm7j1vcf" || c.type === "board_relation");
+                    let nombreMaterial = "";
+                    if (relMaterialCol) {
+                        if (relMaterialCol.linked_items && relMaterialCol.linked_items.length > 0) {
+                            nombreMaterial = relMaterialCol.linked_items.map(li => li.name).filter(Boolean).join(", ");
+                        }
+                        if (!nombreMaterial) {
+                            nombreMaterial = extractColText(relMaterialCol);
+                        }
+                    }
+
+                    // Respaldo en columnas espejo (mirror) o texto si la relación no devolvió texto directo
+                    if (!nombreMaterial) {
+                        const mirrorCol = mCols.find(c => c.type === "mirror" || c.id?.includes("lookup"));
+                        if (mirrorCol) {
+                            nombreMaterial = extractColText(mirrorCol);
+                        }
+                    }
+                    if (!nombreMaterial) {
+                        const textCol = mCols.find(c => c.type === "text" && extractColText(c));
+                        if (textCol) {
+                            nombreMaterial = extractColText(textCol);
+                        }
+                    }
+
+                    // Si no se encuentra columna, usar mat.name
+                    if (!nombreMaterial) {
+                        nombreMaterial = mat.name;
+                    }
+
+                    // Formato: "1. NOMBRE DEL MATERIAL"
+                    const nombreConNumero = (!isNaN(Number(mat.name)) && nombreMaterial !== mat.name)
+                        ? `${mat.name}. ${nombreMaterial}`
+                        : nombreMaterial;
+
                     const cantUnit = extractColNumber(numCol, 1);
                     const unidad = extractColText(umCol) || "PZA";
-                    const sku = mat.name;
                     const cantTotalMat = cantUnit * cantSubmodulo * cantidadEquipos;
 
                     const matObj = {
-                        sku,
-                        nombre: mat.name,
+                        sku: nombreMaterial,
+                        nombre: nombreConNumero,
                         unidad,
                         cantUnitaria: cantUnit,
                         cantTotal: cantTotalMat
@@ -356,13 +399,13 @@ export default async function handler(req, res) {
 
                     subItemObj.materiales.push(matObj);
 
-                    // Consolidar en lista de compras/almacén
-                    if (consolidadoMateriales[sku]) {
-                        consolidadoMateriales[sku].cantTotal += cantTotalMat;
+                    // Consolidar en lista de compras/almacén agrupado por nombre real del material
+                    if (consolidadoMateriales[nombreMaterial]) {
+                        consolidadoMateriales[nombreMaterial].cantTotal += cantTotalMat;
                     } else {
-                        consolidadoMateriales[sku] = {
-                            sku,
-                            nombre: mat.name,
+                        consolidadoMateriales[nombreMaterial] = {
+                            sku: nombreMaterial,
+                            nombre: nombreMaterial,
                             unidad,
                             cantTotal: cantTotalMat
                         };
