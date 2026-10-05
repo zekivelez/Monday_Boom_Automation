@@ -602,34 +602,49 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     };
 
     const drawHeader = () => {
-        // Franja principal con color corporativo #0D72B7
+        // Altura de cabecera limpia
+        const headerHeight = 44;
+        
+        // Fondo blanco para que el logotipo azul resalte perfectamente
         page.drawRectangle({
             x: 35,
-            y: y - 8,
+            y: y - 10,
             width: width - 70,
-            height: 42,
+            height: headerHeight,
+            color: rgb(1, 1, 1),
+            borderColor: borderColor,
+            borderWidth: 0.8
+        });
+
+        // Línea de acento superior corporativa #0D72B7
+        page.drawRectangle({
+            x: 35,
+            y: y + headerHeight - 13,
+            width: width - 70,
+            height: 3,
             color: primaryColor
         });
 
-        // Dibujar Logo a la izquierda si está disponible
-        let textStartX = 48;
+        // Dibujar Logotipo Oficial destacado a la izquierda
         if (logoImage) {
-            const logoDims = logoImage.scaleToFit(90, 32);
+            const logoDims = logoImage.scaleToFit(140, 32);
             page.drawImage(logoImage, {
-                x: 42,
-                y: y - 3,
+                x: 45,
+                y: y - 4,
                 width: logoDims.width,
                 height: logoDims.height
             });
-            textStartX = 42 + logoDims.width + 12;
         }
 
-        page.drawText("TRANSTOOLS - EXPLOSIÓN DE MATERIALES (BOM MODULAR)", {
-            x: textStartX,
-            y: y + 10,
-            size: 10.5,
+        // Título del reporte a la derecha (sin repetir la palabra 'TRANSTOOLS')
+        const titleText = "EXPLOSIÓN DE MATERIALES (BOM MODULAR)";
+        const titleWidth = fontBold.widthOfTextAtSize(titleText, 11);
+        page.drawText(titleText, {
+            x: width - 45 - titleWidth,
+            y: y + 8,
+            size: 11,
             font: fontBold,
-            color: rgb(1, 1, 1)
+            color: primaryColor
         });
 
         y -= 48;
@@ -740,86 +755,8 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     }
 
     // =========================================================================
-    // SECCIÓN 2: Resumen Consolidado de Materiales (Almacén / Compras)
+    // SECCIÓN 2: Resumen Consolidado omitido (enfoque exclusivo en desglose modular)
     // =========================================================================
-    if (consolidado && consolidado.length > 0) {
-        if (y < 120) {
-            page = pdfDoc.addPage([612, 792]);
-            y = 750;
-            drawHeader();
-        }
-
-        y -= 10;
-        page.drawRectangle({
-            x: 35,
-            y: y - 4,
-            width: width - 70,
-            height: 20,
-            color: primaryColor
-        });
-
-        page.drawText("RESUMEN CONSOLIDADO DE MATERIALES (TOTALES PARA PRODUCCIÓN)", {
-            x: 45,
-            y: y + 2,
-            size: 8.5,
-            font: fontBold,
-            color: rgb(1, 1, 1)
-        });
-        y -= 22;
-
-        page.drawRectangle({
-            x: 35,
-            y: y - 3,
-            width: width - 70,
-            height: 16,
-            color: lightGray,
-            borderColor,
-            borderWidth: 0.5
-        });
-
-        page.drawText("SKU", { x: 42, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
-        page.drawText("DESCRIPCIÓN / MATERIAL", { x: 110, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
-        page.drawText("U.M.", { x: 420, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
-        page.drawText("CANTIDAD TOTAL", { x: 480, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
-        y -= 18;
-
-        consolidado.forEach((item, index) => {
-            if (y < 42) {
-                page = pdfDoc.addPage([612, 792]);
-                y = 750;
-                drawHeader();
-            }
-
-            if (index % 2 === 1) {
-                page.drawRectangle({
-                    x: 35,
-                    y: y - 3,
-                    width: width - 70,
-                    height: 14,
-                    color: rgb(0.98, 0.98, 0.99)
-                });
-            }
-
-            const itemSku = truncate(item.sku || "S/SKU", 60, fontBold, 7);
-            const itemDesc = truncate(item.nombre || item.sku, 300, fontRegular, 7.5);
-            const itemUm = safeText(item.unidad || "PZA");
-            const itemTot = item.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
-
-            page.drawText(itemSku, { x: 42, y, size: 7, font: fontBold, color: primaryColor });
-            page.drawText(itemDesc, { x: 110, y, size: 7.5, font: fontRegular, color: darkGray });
-            page.drawText(itemUm, { x: 420, y, size: 7.5, font: fontRegular, color: darkGray });
-            page.drawText(itemTot, { x: 485, y, size: 7.5, font: fontBold, color: primaryColor });
-
-            page.drawLine({
-                start: { x: 35, y: y - 3 },
-                end: { x: width - 35, y: y - 3 },
-                color: borderColor,
-                thickness: 0.4
-            });
-
-            y -= 14;
-        });
-    }
 
     return await pdfDoc.save();
 }
