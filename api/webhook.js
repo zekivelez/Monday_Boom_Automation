@@ -169,173 +169,188 @@ export default async function handler(req, res) {
 
         console.log(`[PRUEBA API]: Orden="${orderName}", Producto="${productoSeleccionado}", ConfigNombre="${configNombreVisible}", ClaveTecnica="${configCodigoTecnico}", Cantidad=${cantidadEquipos}`);
 
+        // Fragmento común de columnas (relaciones y espejos devuelven text=null, por eso se pide display_value)
+        const COLS_FRAGMENT = `column_values {
+            id text value type
+            ... on MirrorValue { display_value }
+            ... on BoardRelationValue { display_value linked_item_ids linked_items { id name } }
+        }`;
+
+        const BOARD_MODULOS = "18432845727";
+        const BOARD_SUBMODULOS = "18432844380";
+
+        const getLinkedIds = (col) => {
+            if (!col) return [];
+            if (Array.isArray(col.linked_item_ids) && col.linked_item_ids.length) return col.linked_item_ids.map(String);
+            if (Array.isArray(col.linked_items) && col.linked_items.length) return col.linked_items.map(li => String(li.id));
+            try {
+                const v = JSON.parse(col.value || "null");
+                if (Array.isArray(v?.linkedPulseIds)) return v.linkedPulseIds.map(l => String(l.linkedPulseId));
+            } catch {}
+            return [];
+        };
+
+        // Consulta ítems por ID (en bloques de 100) con columnas y subelementos
+        const fetchItemsByIds = async (ids) => {
+            const unique = [...new Set(ids.map(String))];
+            const out = [];
+            for (let i = 0; i < unique.length; i += 100) {
+                const chunk = unique.slice(i, i + 100);
+                const q = `query ($ids: [ID!]) {
+                    items(ids: $ids, limit: 100) {
+                        id name
+                        board { id }
+                        group { id title }
+                        ${COLS_FRAGMENT}
+                        subitems { id name ${COLS_FRAGMENT} }
+                    }
+                }`;
+                const r = await fetchMonday(q, { ids: chunk });
+                out.push(...(r.data?.items || []));
+            }
+            return out;
+        };
+
+        const STOP_WORDS = new Set(["bom", "modular", "de", "del", "la", "el"]);
+        const tokens = (s) => normalizeStr(s).split(" ").filter(t => t && !STOP_WORDS.has(t));
+
         // =========================================================================
-        // PASO 2: Consultar Tablero MODULOS (18432845727) con grupos y subelementos
+        // PASO 2: BOM MODULAR (18432584292) -> filas de la configuración
         // =========================================================================
-        console.log(`[Paso 2]: Consultando Tablero MODULOS (18432845727)...`);
-        const queryModulos = `query {
-            boards(ids: [18432845727]) {
-                groups {
-                    id
-                    title
-                }
+        console.log(`[Paso 2]: Consultando BOM MODULAR (18432584292)...`);
+        const queryBom = `query {
+            boards(ids: [18432584292]) {
+                columns { id title }
                 items_page(limit: 500) {
                     items {
-                        id
-                        name
-                        group {
-                            id
-                            title
-                        }
-                        column_values {
-                            id
-                            text
-                            value
-                            type
-                            ... on BoardRelationValue {
-                                linked_item_ids
-                                linked_items { id name }
-                            }
-                        }
+                        id name
+                        group { id title }
+                        ${COLS_FRAGMENT}
+                        subitems { id name ${COLS_FRAGMENT} }
                     }
                 }
             }
         }`;
+        const resBom = await fetchMonday(queryBom);
+        const boardBom = resBom.data?.boards?.[0];
+        const bomItems = boardBom?.items_page?.items || [];
+        const colConfigBomId = (boardBom?.columns || []).find(c => normalizeStr(c.title) === "configuracion")?.id;
+        console.log(`[BOM MODULAR]: ${bomItems.length} filas. Columna CONFIGURACION="${colConfigBomId || "NO ENCONTRADA"}"`);
 
-        const resModulos = await fetchMonday(queryModulos);
-        const boardModulos = resModulos.data?.boards?.[0];
-        const allModulosItems = boardModulos?.items_page?.items || [];
-        const gruposModulos = boardModulos?.groups || [];
+        const targetClean = cleanCode(configCodigoTecnico);
+        const targetTokens = new Set([...tokens(configNombreVisible), ...tokens(productoSeleccionado)]);
 
-        console.log(`[MODULOS]: ${gruposModulos.length} grupos detectados:`, gruposModulos.map(g => `"${g.title}"`).join(", "));
-        console.log(`[MODULOS]: ${allModulosItems.length} filas totales en catálogo`);
-
-        // Identificar las filas de MODULOS que pertenecen al grupo de la configuración técnica
-        const targetCleanCode = cleanCode(configCodigoTecnico);
-        console.log(`[MODULOS]: Buscando filas para Clave Normalizada="${targetCleanCode}"...`);
-
-        let filasModulosConfig = allModulosItems.filter(item => {
-            const gTitle = item.group?.title || "";
-            const gClean = cleanCode(gTitle);
-            if (gClean && targetCleanCode) {
-                if (gClean === targetCleanCode || gClean.includes(targetCleanCode) || targetCleanCode.includes(gClean)) {
-                    return true;
-                }
-            }
-            const gNorm = normalizeStr(gTitle);
-            const targetNorm = normalizeStr(configNombreVisible);
-            if (gNorm && targetNorm && (gNorm.includes(targetNorm) || targetNorm.includes(gNorm))) {
-                return true;
-            }
-            return false;
+        const filasBom = bomItems.filter(item => {
+            const cfg = extractColText(item.column_values?.find(c => c.id === colConfigBomId));
+            if (cfg && targetClean && cleanCode(cfg) === targetClean) return true;
+            if (cfg && normalizeStr(cfg) === normalizeStr(configNombreVisible)) return true;
+            // Respaldo: título del grupo (ej. "BOM MODULAR DOLLY A SCORPION") contenido en el nombre de la configuración
+            const gTok = tokens(item.group?.title);
+            return gTok.length > 0 && gTok.every(t => targetTokens.has(t));
         });
 
-        if (filasModulosConfig.length === 0) {
-            console.warn(`[MODULOS]: No se encontraron filas por coincidencia estricta de grupo. Intentando respaldo por primer grupo disponible.`);
-            if (gruposModulos.length > 0) {
-                const primerGrupoId = gruposModulos[0].id;
-                filasModulosConfig = allModulosItems.filter(item => item.group?.id === primerGrupoId);
+        if (filasBom.length === 0) {
+            const msg = `No se encontraron filas en BOM MODULAR para la configuración "${configCodigoTecnico}" / "${configNombreVisible}".`;
+            console.error(`[BOM MODULAR]: ${msg}`);
+            return res.status(200).json({ success: false, error: msg });
+        }
+
+        const configsEnBom = [...new Set(filasBom.map(f => extractColText(f.column_values?.find(c => c.id === colConfigBomId))).filter(Boolean))];
+        console.log(`[BOM MODULAR]: ${filasBom.length} filas seleccionadas (grupo "${filasBom[0].group?.title}", CONFIGURACION=${configsEnBom.join(" | ")}): ${filasBom.map(f => f.name).join(" | ")}`);
+        if (targetClean && !configsEnBom.some(c => cleanCode(c) === targetClean)) {
+            console.warn(`[BOM MODULAR]: La clave de PRUEBA API "${configCodigoTecnico}" no coincide con la CONFIGURACION de BOM MODULAR (${configsEnBom.join(" | ")}). Se enlazó por nombre de grupo.`);
+        }
+
+        // Módulos referenciados en los subelementos de BOM MODULAR (columna MODULOS = board_relation_mm7qyye2)
+        const refsModulos = [];
+        for (const fila of filasBom) {
+            for (const sub of (fila.subitems || [])) {
+                const sCols = sub.column_values || [];
+                const ids = getLinkedIds(sCols.find(c => c.id === "board_relation_mm7qyye2"));
+                if (!ids.length) {
+                    console.warn(`[BOM MODULAR]: Subelemento "${sub.name}" de "${fila.name}" no tiene MODULO vinculado (board_relation_mm7qyye2 vacío).`);
+                    continue;
+                }
+                let cant = extractColNumber(sCols.find(c => c.type === "numbers"), 1);
+                if (cant <= 0) cant = 1;
+                ids.forEach(id => refsModulos.push({ moduloId: id, cantidad: cant, bomFila: fila.name }));
             }
         }
 
-        console.log(`[MODULOS]: ${filasModulosConfig.length} filas seleccionadas dentro del grupo "${configCodigoTecnico}"`);
+        if (refsModulos.length === 0) {
+            const msg = `Las filas de BOM MODULAR no tienen módulos vinculados en la columna MODULOS (board_relation_mm7qyye2).`;
+            console.error(`[BOM MODULAR]: ${msg}`);
+            return res.status(200).json({ success: false, error: msg });
+        }
 
         // =========================================================================
-        // PASO 3: Consultar Tablero SUBMODULOS (18432844380) con sus Materiales (Subelementos)
+        // PASO 3: MODULOS (18432845727) -> enlaces a SUBMODULOS
         // =========================================================================
-        console.log(`[Paso 3]: Consultando Tablero SUBMODULOS (18432844380)...`);
-        const querySubmodulos = `query {
-            boards(ids: [18432844380]) {
-                items_page(limit: 500) {
-                    items {
-                        id
-                        name
-                        column_values {
-                            id
-                            text
-                            value
-                            type
-                            ... on MirrorValue {
-                                display_value
-                            }
-                            ... on BoardRelationValue {
-                                linked_item_ids
-                                linked_items { id name }
-                            }
-                        }
-                        subitems {
-                            id
-                            name
-                            column_values {
-                                id
-                                text
-                                value
-                                type
-                                ... on MirrorValue {
-                                    display_value
-                                }
-                                ... on BoardRelationValue {
-                                    linked_item_ids
-                                    linked_items { id name }
-                                }
-                            }
-                        }
-                    }
-                }
+        console.log(`[Paso 3]: Consultando ${refsModulos.length} módulos vinculados en MODULOS...`);
+        const modulosItems = await fetchItemsByIds(refsModulos.map(r => r.moduloId));
+        const modulosById = new Map(modulosItems.map(m => [String(m.id), m]));
+        console.log(`[MODULOS]: ${modulosItems.length} módulos leídos: ${modulosItems.map(m => m.name).join(" | ")}`);
+
+        const refsSub = [];
+        for (const ref of refsModulos) {
+            const mod = modulosById.get(ref.moduloId);
+            if (!mod) {
+                console.warn(`[MODULOS]: No se pudo leer el módulo ${ref.moduloId} (fila BOM "${ref.bomFila}").`);
+                continue;
             }
-        }`;
-
-        const resSubmodulos = await fetchMonday(querySubmodulos);
-        const allSubmodulosItems = resSubmodulos.data?.boards?.[0]?.items_page?.items || [];
-        console.log(`[SUBMODULOS]: ${allSubmodulosItems.length} submódulos disponibles en catálogo`);
-
-        // Indexar submódulos por ID y por nombre para enlace instantáneo
-        const submodulosMapById = new Map();
-        const submodulosMapByName = new Map();
-        allSubmodulosItems.forEach(item => {
-            submodulosMapById.set(String(item.id), item);
-            submodulosMapByName.set(normalizeStr(item.name), item);
-            const codigoSub = extractColText(item.column_values?.find(c => c.id === "text_mm7jphz6"));
-            if (codigoSub) submodulosMapByName.set(normalizeStr(codigoSub), item);
-        });
+            const candidatos = [];
+            // Los submódulos se conectan desde los SUBELEMENTOS del módulo (cada subelemento = 1 submódulo)
+            if (!(mod.subitems || []).length) {
+                console.warn(`[MODULOS]: El módulo "${mod.name}" no tiene subelementos con submódulos.`);
+            }
+            for (const s of (mod.subitems || [])) {
+                const sc = s.column_values || [];
+                const cantSub = extractColNumber(sc.find(c => c.id === "numeric_mm7j6c8r") || sc.find(c => c.type === "numbers"), 1);
+                sc.filter(c => c.type === "board_relation").forEach(c => {
+                    getLinkedIds(c).forEach(id => candidatos.push({ id, cant: cantSub }));
+                });
+            }
+            candidatos.forEach(c => refsSub.push({
+                submoduloId: c.id,
+                cantidad: (c.cant > 0 ? c.cant : 1) * ref.cantidad,
+                moduloNombre: mod.name,
+                bomFila: ref.bomFila
+            }));
+        }
 
         // =========================================================================
-        // PASO 4: Construir la Estructura de Explosión (Submódulos -> Materiales)
+        // PASO 4: SUBMODULOS (18432844380) -> materiales en subelementos
+        // =========================================================================
+        console.log(`[Paso 4]: Consultando ${refsSub.length} enlaces a SUBMODULOS...`);
+        const submodulosItems = (await fetchItemsByIds(refsSub.map(r => r.submoduloId)))
+            .filter(it => String(it.board?.id) === BOARD_SUBMODULOS);
+        const submodulosMapById = new Map(submodulosItems.map(s => [String(s.id), s]));
+        console.log(`[SUBMODULOS]: ${submodulosItems.length} submódulos leídos: ${submodulosItems.map(s => s.name).join(" | ")}`);
+
+        const refsSubValidas = refsSub.filter(r => submodulosMapById.has(r.submoduloId));
+        if (refsSubValidas.length === 0) {
+            const msg = `Los módulos (${modulosItems.map(m => m.name).join(" | ")}) no tienen submódulos vinculados del tablero SUBMODULOS.`;
+            console.error(`[MODULOS]: ${msg}`);
+            return res.status(200).json({ success: false, error: msg });
+        }
+
+        // =========================================================================
+        // PASO 5: Construir la Estructura de Explosión (Submódulos -> Materiales)
         // =========================================================================
         const desgloses = [];
         const consolidadoMateriales = {};
+        let filaContador = 0;
 
-        for (const filaMod of filasModulosConfig) {
-            const cols = filaMod.column_values || [];
-            const colSubmodulo = cols.find(c => c.id === "board_relation_mm7j1vcf" || c.type === "board_relation");
-            const colCant = cols.find(c => c.id === "numeric_mm7j6c8r" || c.type === "numbers");
-
-            let cantSubmodulo = extractColNumber(colCant, 1);
-            if (cantSubmodulo <= 0) cantSubmodulo = 1;
-
-            // Extraer ID y Nombre del Submódulo vinculado
-            const linkedId = colSubmodulo?.linked_item_ids?.[0];
-            const linkedName = colSubmodulo?.linked_items?.[0]?.name || extractColText(colSubmodulo) || filaMod.name;
-
-            let submoduloEncontrado = linkedId ? submodulosMapById.get(String(linkedId)) : null;
-            if (!submoduloEncontrado && linkedName) {
-                submoduloEncontrado = submodulosMapByName.get(normalizeStr(linkedName));
-            }
-            if (!submoduloEncontrado && linkedName) {
-                const normL = normalizeStr(linkedName);
-                submoduloEncontrado = allSubmodulosItems.find(sm => {
-                    const smNorm = normalizeStr(sm.name);
-                    return smNorm.includes(normL) || normL.includes(smNorm);
-                });
-            }
-
-            const nombreFinalSubmodulo = submoduloEncontrado?.name || linkedName || `Submódulo #${filaMod.name}`;
-            const subCols = submoduloEncontrado?.column_values || [];
-            const codigoSub = extractColText(subCols.find(c => c.id === "text_mm7jphz6")) || nombreFinalSubmodulo;
+        for (const entrada of refsSubValidas) {
+            const submoduloEncontrado = submodulosMapById.get(entrada.submoduloId);
+            filaContador++;
+            const cantSubmodulo = entrada.cantidad;
+            const subCols = submoduloEncontrado.column_values || [];
+            const codigoSub = extractColText(subCols.find(c => c.id === "text_mm7jphz6")) || submoduloEncontrado.name;
 
             const subItemObj = {
-                filaNumero: filaMod.name,
-                nombre: nombreFinalSubmodulo,
+                filaNumero: String(filaContador),
+                nombre: `${entrada.moduloNombre} > ${submoduloEncontrado.name}`,
                 codigo: codigoSub,
                 cantidadPorEquipo: cantSubmodulo,
                 cantidadTotalParaOrden: cantSubmodulo * cantidadEquipos,
@@ -346,11 +361,15 @@ export default async function handler(req, res) {
             if (submoduloEncontrado?.subitems && submoduloEncontrado.subitems.length > 0) {
                 for (const mat of submoduloEncontrado.subitems) {
                     const mCols = mat.column_values || [];
-                    const numCol = mCols.find(c => c.type === "numbers" || c.id?.includes("cant") || c.id?.includes("numeric"));
+                    // IDs reales de subelementos en SUBMODULOS
+                    const numCol = mCols.find(c => c.id === "numeric_mm7jbpty") || mCols.find(c => c.type === "numbers");
                     const umCol = mCols.find(c => c.id?.includes("unidad") || c.id?.includes("medida") || c.type === "text" || c.type === "dropdown");
 
-                    // 1. Extraer nombre del Material desde la columna de relación board_relation_mm7j1vcf
-                    const relMaterialCol = mCols.find(c => c.id === "board_relation_mm7j1vcf" || c.type === "board_relation");
+                    // 1. Extraer nombre del Material desde la columna de relación board_relation_mm7jcgm0
+                    const relMaterialCol = mCols.find(c => c.id === "board_relation_mm7jcgm0") || mCols.find(c => c.type === "board_relation");
+                    if (!relMaterialCol?.linked_item_ids?.length) {
+                        console.warn(`[SUBMODULOS]: Subelemento "${mat.name}" de "${submoduloEncontrado.name}" no tiene material vinculado (board_relation_mm7jcgm0 vacío).`);
+                    }
                     let nombreMaterial = "";
                     if (relMaterialCol) {
                         if (relMaterialCol.linked_items && relMaterialCol.linked_items.length > 0) {
