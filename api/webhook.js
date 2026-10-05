@@ -1,4 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import fs from 'fs';
+import path from 'path';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -178,6 +180,7 @@ export default async function handler(req, res) {
 
         const BOARD_MODULOS = "18432845727";
         const BOARD_SUBMODULOS = "18432844380";
+        const BOARD_ARTICULOS = "18432236328"; // Catálogo de Artículos de la Planta (SKU)
 
         const getLinkedIds = (col) => {
             if (!col) return [];
@@ -335,7 +338,37 @@ export default async function handler(req, res) {
         }
 
         // =========================================================================
-        // PASO 5: Construir la Estructura de Explosión (Submódulos -> Materiales)
+        // PASO 5: Consultar SKUs de Materiales desde CATÁLOGO DE ARTÍCULOS (18432236328)
+        // =========================================================================
+        const todosMaterialesIds = [];
+        for (const entrada of refsSubValidas) {
+            const sm = submodulosMapById.get(entrada.submoduloId);
+            for (const mat of (sm?.subitems || [])) {
+                const mCols = mat.column_values || [];
+                const relMat = mCols.find(c => c.id === "board_relation_mm7jcgm0") || mCols.find(c => c.type === "board_relation");
+                getLinkedIds(relMat).forEach(id => todosMaterialesIds.push(id));
+            }
+        }
+
+        console.log(`[Paso 5]: Consultando SKUs para ${todosMaterialesIds.length} materiales en Catálogo (18432236328)...`);
+        const catalogoArticulos = await fetchItemsByIds(todosMaterialesIds);
+        const articulosMap = new Map();
+        catalogoArticulos.forEach(art => {
+            const skuCol = art.column_values?.find(c => c.id === "text_mm7ebpck");
+            const skuVal = extractColText(skuCol);
+            articulosMap.set(String(art.id), {
+                id: art.id,
+                name: art.name,
+                sku: skuVal || ""
+            });
+            if (skuVal) {
+                articulosMap.set(normalizeStr(art.name), { sku: skuVal });
+            }
+        });
+        console.log(`[ARTICULOS]: ${articulosMap.size} artículos indexados con SKU.`);
+
+        // =========================================================================
+        // PASO 6: Construir la Estructura de Explosión (Submódulos -> Materiales)
         // =========================================================================
         const desgloses = [];
         const consolidadoMateriales = {};
@@ -350,7 +383,8 @@ export default async function handler(req, res) {
 
             const subItemObj = {
                 filaNumero: String(filaContador),
-                nombre: `${entrada.moduloNombre} > ${submoduloEncontrado.name}`,
+                moduloNombre: entrada.moduloNombre,
+                submoduloNombre: submoduloEncontrado.name,
                 codigo: codigoSub,
                 cantidadPorEquipo: cantSubmodulo,
                 cantidadTotalParaOrden: cantSubmodulo * cantidadEquipos,
@@ -404,13 +438,24 @@ export default async function handler(req, res) {
                         ? `${mat.name}. ${nombreMaterial}`
                         : nombreMaterial;
 
+                    // Extraer SKU desde el catálogo consultado
+                    let skuFinal = "";
+                    const linkedArtId = relMaterialCol ? getLinkedIds(relMaterialCol)[0] : null;
+                    if (linkedArtId && articulosMap.has(String(linkedArtId))) {
+                        skuFinal = articulosMap.get(String(linkedArtId))?.sku || "";
+                    }
+                    if (!skuFinal && nombreMaterial) {
+                        skuFinal = articulosMap.get(normalizeStr(nombreMaterial))?.sku || "";
+                    }
+
                     const cantUnit = extractColNumber(numCol, 1);
                     const unidad = extractColText(umCol) || "PZA";
                     const cantTotalMat = cantUnit * cantSubmodulo * cantidadEquipos;
 
                     const matObj = {
-                        sku: nombreMaterial,
+                        sku: skuFinal || "S/SKU",
                         nombre: nombreConNumero,
+                        nombreBase: nombreMaterial,
                         unidad,
                         cantUnitaria: cantUnit,
                         cantTotal: cantTotalMat
@@ -419,11 +464,12 @@ export default async function handler(req, res) {
                     subItemObj.materiales.push(matObj);
 
                     // Consolidar en lista de compras/almacén agrupado por nombre real del material
-                    if (consolidadoMateriales[nombreMaterial]) {
-                        consolidadoMateriales[nombreMaterial].cantTotal += cantTotalMat;
+                    const claveConsolidado = skuFinal ? `${skuFinal}_${nombreMaterial}` : nombreMaterial;
+                    if (consolidadoMateriales[claveConsolidado]) {
+                        consolidadoMateriales[claveConsolidado].cantTotal += cantTotalMat;
                     } else {
-                        consolidadoMateriales[nombreMaterial] = {
-                            sku: nombreMaterial,
+                        consolidadoMateriales[claveConsolidado] = {
+                            sku: skuFinal || "S/SKU",
                             nombre: nombreMaterial,
                             unidad,
                             cantTotal: cantTotalMat
@@ -518,14 +564,28 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    const { width, height } = page.getSize();
-    let y = height - 35;
+    // Cargar e incrustar logotipo oficial
+    let logoImage = null;
+    try {
+        const logoPath = path.resolve(process.cwd(), 'Logo-azul.png');
+        if (fs.existsSync(logoPath)) {
+            const logoBytes = fs.readFileSync(logoPath);
+            logoImage = await pdfDoc.embedPng(logoBytes);
+        }
+    } catch (e) {
+        console.warn("[PDF]: No se pudo cargar Logo-azul.png:", e.message);
+    }
 
-    const primaryColor = rgb(0.08, 0.2, 0.42);   // Azul Corporativo Transtools
-    const secondaryColor = rgb(0.18, 0.35, 0.65);
-    const darkGray = rgb(0.2, 0.2, 0.2);
+    const { width, height } = page.getSize();
+    let y = height - 30;
+
+    // Color corporativo solicitado: #0D72B7 (R: 13, G: 114, B: 183)
+    const primaryColor = rgb(13 / 255, 114 / 255, 183 / 255);
+    const secondaryColor = rgb(0.12, 0.28, 0.48); // Azul marino elegante de apoyo
+    const headerBgLight = rgb(0.93, 0.96, 0.99);  // Fondo tenue azul para jerarquía
+    const darkGray = rgb(0.18, 0.18, 0.18);
     const lightGray = rgb(0.94, 0.95, 0.97);
-    const borderColor = rgb(0.8, 0.83, 0.88);
+    const borderColor = rgb(0.80, 0.84, 0.90);
 
     const safeText = (text) => {
         if (!text) return "";
@@ -542,23 +602,37 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     };
 
     const drawHeader = () => {
+        // Franja principal con color corporativo #0D72B7
         page.drawRectangle({
             x: 35,
-            y: y - 5,
+            y: y - 8,
             width: width - 70,
-            height: 36,
+            height: 42,
             color: primaryColor
         });
 
+        // Dibujar Logo a la izquierda si está disponible
+        let textStartX = 48;
+        if (logoImage) {
+            const logoDims = logoImage.scaleToFit(90, 32);
+            page.drawImage(logoImage, {
+                x: 42,
+                y: y - 3,
+                width: logoDims.width,
+                height: logoDims.height
+            });
+            textStartX = 42 + logoDims.width + 12;
+        }
+
         page.drawText("TRANSTOOLS - EXPLOSIÓN DE MATERIALES (BOM MODULAR)", {
-            x: 48,
-            y: y + 9,
-            size: 11.5,
+            x: textStartX,
+            y: y + 10,
+            size: 10.5,
             font: fontBold,
             color: rgb(1, 1, 1)
         });
 
-        y -= 40;
+        y -= 48;
 
         // Fila 1 de Metadatos
         page.drawText(`Orden: ${safeText(orderName)}`, { x: 38, y, size: 9, font: fontBold, color: darkGray });
@@ -573,8 +647,8 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
 
         // Fila 3 de Metadatos: Configuración y Código Técnico
         const confTxt = `Configuración: ${safeText(configNombre)} (${safeText(configCodigo)})`;
-        page.drawText(confTxt, { x: 38, y, size: 8.5, font: fontBold, color: secondaryColor });
-        y -= 18;
+        page.drawText(confTxt, { x: 38, y, size: 8.5, font: fontBold, color: primaryColor });
+        y -= 16;
 
         page.drawLine({
             start: { x: 35, y },
@@ -588,34 +662,45 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     drawHeader();
 
     // =========================================================================
-    // SECCIÓN 1: Desglose por Submódulos y sus Materiales
+    // SECCIÓN 1: Desglose por Módulo / Submódulo y sus Materiales
     // =========================================================================
     for (const sub of desgloses) {
-        if (y < 75) {
+        if (y < 85) {
             page = pdfDoc.addPage([612, 792]);
             y = 750;
             drawHeader();
         }
 
-        // Barra de Submódulo
+        // Encabezado de dos niveles: MÓDULO y SUBMÓDULO clarificados
         page.drawRectangle({
             x: 35,
-            y: y - 3,
+            y: y - 10,
             width: width - 70,
-            height: 17,
-            color: secondaryColor
+            height: 25,
+            color: primaryColor
         });
 
-        const subTitle = `${safeText(sub.filaNumero)}. ${safeText(sub.nombre)} | Cant. x Equipo: ${sub.cantidadPorEquipo} | Total Req: ${sub.cantidadTotalParaOrden}`;
-        page.drawText(subTitle, { x: 42, y: y + 2, size: 8, font: fontBold, color: rgb(1, 1, 1) });
-        y -= 18;
+        // Nivel 1: MÓDULO (Línea superior)
+        const moduloTxt = `${sub.filaNumero}. MÓDULO: ${safeText(sub.moduloNombre || "GENERAL")}`;
+        page.drawText(truncate(moduloTxt, 340, fontBold, 7.5), { x: 42, y: y + 3, size: 7.5, font: fontBold, color: rgb(1, 1, 1) });
+
+        // Totalización a la derecha
+        const totalReqTxt = `Cant. x Equipo: ${sub.cantidadPorEquipo} | Total Req: ${sub.cantidadTotalParaOrden}`;
+        page.drawText(totalReqTxt, { x: width - 210, y: y + 3, size: 7.5, font: fontBold, color: rgb(1, 1, 1) });
+
+        // Nivel 2: SUBMÓDULO (Línea inferior destacada)
+        const submoduloTxt = `   SUBMÓDULO: ${safeText(sub.submoduloNombre || sub.nombre)}`;
+        page.drawText(truncate(submoduloTxt, 480, fontRegular, 7.2), { x: 42, y: y - 7, size: 7.2, font: fontRegular, color: rgb(0.92, 0.96, 1) });
+
+        y -= 26;
 
         if (sub.materiales && sub.materiales.length > 0) {
-            // Encabezados de tabla de materiales
-            page.drawText("MATERIAL / PIEZA", { x: 45, y, size: 7, font: fontBold, color: darkGray });
-            page.drawText("U.M.", { x: 370, y, size: 7, font: fontBold, color: darkGray });
-            page.drawText("CANT. UNIT.", { x: 420, y, size: 7, font: fontBold, color: darkGray });
-            page.drawText("TOTAL ORDEN", { x: 490, y, size: 7, font: fontBold, color: primaryColor });
+            // Encabezados de tabla de materiales (Con Columna SKU)
+            page.drawText("SKU", { x: 42, y, size: 7, font: fontBold, color: primaryColor });
+            page.drawText("MATERIAL / PIEZA", { x: 105, y, size: 7, font: fontBold, color: darkGray });
+            page.drawText("U.M.", { x: 395, y, size: 7, font: fontBold, color: darkGray });
+            page.drawText("CANT. UNIT.", { x: 440, y, size: 7, font: fontBold, color: darkGray });
+            page.drawText("TOTAL ORDEN", { x: 505, y, size: 7, font: fontBold, color: primaryColor });
             y -= 10;
 
             sub.materiales.forEach(mat => {
@@ -625,19 +710,21 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
                     drawHeader();
                 }
 
-                const matName = truncate(mat.nombre, 310, fontRegular, 7.5);
+                const matSku = truncate(mat.sku || "S/SKU", 58, fontBold, 7);
+                const matName = truncate(mat.nombre, 280, fontRegular, 7.2);
                 const matUm = safeText(mat.unidad);
                 const matUnit = mat.cantUnitaria.toLocaleString('es-MX', { maximumFractionDigits: 2 });
                 const matTot = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
 
-                page.drawText(matName, { x: 45, y, size: 7.5, font: fontRegular, color: darkGray });
-                page.drawText(matUm, { x: 370, y, size: 7.5, font: fontRegular, color: darkGray });
-                page.drawText(matUnit, { x: 425, y, size: 7.5, font: fontRegular, color: darkGray });
-                page.drawText(matTot, { x: 495, y, size: 7.5, font: fontBold, color: primaryColor });
+                page.drawText(matSku, { x: 42, y, size: 7, font: fontBold, color: primaryColor });
+                page.drawText(matName, { x: 105, y, size: 7.2, font: fontRegular, color: darkGray });
+                page.drawText(matUm, { x: 395, y, size: 7.2, font: fontRegular, color: darkGray });
+                page.drawText(matUnit, { x: 445, y, size: 7.2, font: fontRegular, color: darkGray });
+                page.drawText(matTot, { x: 510, y, size: 7.2, font: fontBold, color: primaryColor });
 
                 page.drawLine({
-                    start: { x: 40, y: y - 2 },
-                    end: { x: width - 40, y: y - 2 },
+                    start: { x: 38, y: y - 2 },
+                    end: { x: width - 38, y: y - 2 },
                     color: borderColor,
                     thickness: 0.3
                 });
@@ -649,7 +736,7 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
             y -= 12;
         }
 
-        y -= 5;
+        y -= 6;
     }
 
     // =========================================================================
@@ -674,7 +761,7 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
         page.drawText("RESUMEN CONSOLIDADO DE MATERIALES (TOTALES PARA PRODUCCIÓN)", {
             x: 45,
             y: y + 2,
-            size: 9,
+            size: 8.5,
             font: fontBold,
             color: rgb(1, 1, 1)
         });
@@ -690,9 +777,10 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
             borderWidth: 0.5
         });
 
-        page.drawText("DESCRIPCIÓN / MATERIAL", { x: 42, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
-        page.drawText("U.M.", { x: 410, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
-        page.drawText("CANTIDAD TOTAL", { x: 470, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        page.drawText("SKU", { x: 42, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        page.drawText("DESCRIPCIÓN / MATERIAL", { x: 110, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        page.drawText("U.M.", { x: 420, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
+        page.drawText("CANTIDAD TOTAL", { x: 480, y: y + 2, size: 7.5, font: fontBold, color: primaryColor });
         y -= 18;
 
         consolidado.forEach((item, index) => {
@@ -712,13 +800,15 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
                 });
             }
 
-            const itemDesc = truncate(item.nombre || item.sku, 355, fontRegular, 7.5);
+            const itemSku = truncate(item.sku || "S/SKU", 60, fontBold, 7);
+            const itemDesc = truncate(item.nombre || item.sku, 300, fontRegular, 7.5);
             const itemUm = safeText(item.unidad || "PZA");
             const itemTot = item.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
 
-            page.drawText(itemDesc, { x: 42, y, size: 7.5, font: fontRegular, color: darkGray });
-            page.drawText(itemUm, { x: 410, y, size: 7.5, font: fontRegular, color: darkGray });
-            page.drawText(itemTot, { x: 475, y, size: 8, font: fontBold, color: primaryColor });
+            page.drawText(itemSku, { x: 42, y, size: 7, font: fontBold, color: primaryColor });
+            page.drawText(itemDesc, { x: 110, y, size: 7.5, font: fontRegular, color: darkGray });
+            page.drawText(itemUm, { x: 420, y, size: 7.5, font: fontRegular, color: darkGray });
+            page.drawText(itemTot, { x: 485, y, size: 7.5, font: fontBold, color: primaryColor });
 
             page.drawLine({
                 start: { x: 35, y: y - 3 },
