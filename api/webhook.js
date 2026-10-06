@@ -796,13 +796,13 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
 
         page.drawText("#", { x: 38, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("COD. PROV.", { x: 54, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("SKU INTERNO", { x: 106, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("DESCRIPCION DEL MATERIAL", { x: 150, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("FAMILIA / TIPO", { x: 286, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("U.M.", { x: 360, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("TOTAL REQ.", { x: 382, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
-        page.drawText("PROV. SUGERIDO", { x: 416, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("PROV. ALTERNO", { x: 494, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("SKU", { x: 106, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("DESCRIPCION DEL MATERIAL", { x: 144, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("FAMILIA / TIPO", { x: 288, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("U.M.", { x: 362, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("TOTAL", { x: 384, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
+        page.drawText("PROV. SUGERIDO", { x: 420, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("PROV. ALTERNO", { x: 498, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("[ ]", { x: 558, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
 
         page.drawLine({
@@ -818,39 +818,81 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
     drawHeader();
 
     // =========================================================================
-    // ORDENAMIENTO POR FAMILIA (Para mantener aceros juntos, tornillos juntos, etc.)
+    // ORDENAMIENTO POR FAMILIA (Garantiza aceros juntos al inicio, luego sistemas)
     // =========================================================================
-    const ORDEN_FAMILIAS = [
-        "ACEROS Y PERFILES",
-        "SUSPENSION Y EJES",
-        "QUINTA RUEDA Y ACOPLE",
-        "LLANTAS Y RINES",
-        "NEUMATICA Y FRENOS",
-        "ELECTRICO",
-        "TORNILLERIA Y FIJACION",
-        "CONSUMIBLES Y TALLER",
-        "PINTURA Y RECUBRIMIENTOS",
-        "PUBLICIDAD Y ROTULOS",
-        "GENERAL / VARIOS"
-    ];
-
-    const getFamiliaRank = (fam) => {
+    const getFamiliaRank = (fam, sku, nombre) => {
         const fNorm = normalizeStr(fam || "");
-        const idx = ORDEN_FAMILIAS.findIndex(ofam => normalizeStr(ofam) === fNorm || fNorm.includes(normalizeStr(ofam)));
-        return idx !== -1 ? idx : 999;
+        const sNorm = normalizeStr(sku || "");
+        const nNorm = normalizeStr(nombre || "");
+
+        // 0. ACEROS Y PERFILES (Placas, Vigas, Soleras, Canales, Láminas, PTRs, etc.)
+        if (
+            fNorm.includes("acero") || fNorm.includes("perfil") || fNorm.includes("placa") ||
+            fNorm.includes("lamina") || fNorm.includes("solera") || fNorm.includes("ptr") ||
+            fNorm.includes("viga") || fNorm.includes("canal") || fNorm.includes("aluminio") ||
+            sNorm.startsWith("ac") || sNorm.startsWith("ptr") || sNorm.startsWith("sol") || sNorm.startsWith("pla") ||
+            nNorm.includes("placa") || nNorm.includes("solera") || nNorm.includes("ptr") || nNorm.includes("lamina negra")
+        ) {
+            return 0;
+        }
+
+        // 1. SUSPENSION Y EJES
+        if (fNorm.includes("suspension") || fNorm.includes("eje") || sNorm.startsWith("susp") || nNorm.includes("suspension") || nNorm.includes("eje 77")) {
+            return 1;
+        }
+
+        // 2. QUINTA RUEDA Y ACOPLADORES
+        if (fNorm.includes("acopla") || fNorm.includes("quinta") || fNorm.includes("argolla") || sNorm.startsWith("acop") || nNorm.includes("quinta rueda") || nNorm.includes("argolla")) {
+            return 2;
+        }
+
+        // 3. LLANTAS Y RINES
+        if (fNorm.includes("llanta") || fNorm.includes("rin") || sNorm.startsWith("lyr") || sNorm.startsWith("llaa") || nNorm.includes("llanta") || nNorm.includes("rin de")) {
+            return 3;
+        }
+
+        // 4. SISTEMAS NEUMATICOS Y FRENOS
+        if (fNorm.includes("neumat") || fNorm.includes("freno") || sNorm.startsWith("sneu") || nNorm.includes("valvula") || nNorm.includes("manguera") || nNorm.includes("bushing") || nNorm.includes("codo") || nNorm.includes("conector") || nNorm.includes("niple") || nNorm.includes("tanque de aire")) {
+            return 4;
+        }
+
+        // 5. SISTEMAS ELECTRICOS
+        if (fNorm.includes("electr") || sNorm.startsWith("sele") || nNorm.includes("cable") || nNorm.includes("plafon") || nNorm.includes("poliflex")) {
+            return 5;
+        }
+
+        // 6. TORNILLERIA Y FIJACION
+        if (fNorm.includes("tornill") || fNorm.includes("fijac") || sNorm.startsWith("torn") || nNorm.includes("tornillo") || nNorm.includes("tuerca") || nNorm.includes("rondana") || nNorm.includes("remache")) {
+            return 6;
+        }
+
+        // 7. CONSUMIBLES DE TALLER
+        if (fNorm.includes("consumible") || fNorm.includes("taller") || sNorm.startsWith("cons") || nNorm.includes("disco") || nNorm.includes("electrodo") || nNorm.includes("alambre") || nNorm.includes("argon")) {
+            return 7;
+        }
+
+        // 8. PINTURA Y RECUBRIMIENTOS
+        if (fNorm.includes("pintur") || sNorm.startsWith("pint") || nNorm.includes("pintura") || nNorm.includes("thinner")) {
+            return 8;
+        }
+
+        // 9. PUBLICIDAD Y ROTULOS
+        if (fNorm.includes("publicidad") || fNorm.includes("rotul") || sNorm.startsWith("publ") || nNorm.includes("calcomania") || nNorm.includes("cinta reflejante") || nNorm.includes("placa de identificacion") || nNorm.includes("tope")) {
+            return 9;
+        }
+
+        return 99;
     };
 
     const itemsOrdenados = [...consolidado].sort((a, b) => {
-        const famA = a.familia || "GENERAL / VARIOS";
-        const famB = b.familia || "GENERAL / VARIOS";
-        const rankA = getFamiliaRank(famA);
-        const rankB = getFamiliaRank(famB);
+        const rankA = getFamiliaRank(a.familia, a.sku, a.nombre);
+        const rankB = getFamiliaRank(b.familia, b.sku, b.nombre);
 
         if (rankA !== rankB) {
             return rankA - rankB;
         }
 
-        // Si son de la misma familia, ordenar alfabéticamente por nombre de material
+        // Si son de la misma familia, ordenar alfabéticamente por descripción
         return (a.nombre || "").localeCompare(b.nombre || "", 'es');
     });
 
@@ -890,34 +932,34 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
 
         const numStr = String(partidaContador);
         const codProvStr = truncate(mat.codigoProveedor || "-", 48, fontRegular, 6.8);
-        const skuStr = truncate(mat.sku || "S/SKU", 40, fontBold, 6.8);
-        const descStr = truncate(mat.nombre, 132, fontRegular, 6.8);
-        const famStr = truncate(mat.familia || "GENERAL", 70, fontRegular, 6.8);
+        const skuStr = truncate(mat.sku || "S/SKU", 36, fontBold, 6.8);
+        const descStr = truncate(mat.nombre, 138, fontRegular, 6.8);
+        const famStr = truncate(mat.familia || "GENERAL", 68, fontRegular, 6.8);
         const umStr = safeText(mat.unidad);
         const cantStr = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
         
         const tieneProv = Boolean(mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-");
-        const provSugStr = truncate(tieneProv ? mat.proveedorPrincipal : "POR ASIGNAR", 74, fontRegular, 6.8);
-        const altProvStr = truncate(mat.proveedorAlterno || "-", 60, fontRegular, 6.8);
+        const provSugStr = truncate(tieneProv ? mat.proveedorPrincipal : "POR ASIGNAR", 72, fontRegular, 6.8);
+        const altProvStr = truncate(mat.proveedorAlterno || "-", 56, fontRegular, 6.8);
 
         page.drawText(numStr, { x: 38, y, size: 6.8, font: fontRegular, color: darkGray });
         page.drawText(codProvStr, { x: 54, y, size: 6.8, font: fontRegular, color: darkGray });
         page.drawText(skuStr, { x: 106, y, size: 6.8, font: fontBold, color: primaryColor });
-        page.drawText(descStr, { x: 150, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(famStr, { x: 286, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(umStr, { x: 360, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(cantStr, { x: 382, y, size: 7, font: fontBold, color: primaryColor });
+        page.drawText(descStr, { x: 144, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(famStr, { x: 288, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(umStr, { x: 362, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(cantStr, { x: 384, y, size: 7, font: fontBold, color: primaryColor });
         
         // Proveedor sugerido
         page.drawText(provSugStr, { 
-            x: 416, 
+            x: 420, 
             y, 
             size: 6.8, 
             font: fontRegular, 
             color: tieneProv ? darkGray : rgb(0.6, 0.4, 0.2) 
         });
         
-        page.drawText(altProvStr, { x: 494, y, size: 6.8, font: fontRegular, color: rgb(0.4, 0.4, 0.4) });
+        page.drawText(altProvStr, { x: 498, y, size: 6.8, font: fontRegular, color: rgb(0.4, 0.4, 0.4) });
 
         // Casilla de verificación cuadrada [ ]
         page.drawRectangle({
