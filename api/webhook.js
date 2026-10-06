@@ -2,6 +2,23 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
 
+// Funciones auxiliares globales
+const normalizeStr = (s) => {
+    if (!s) return "";
+    return String(s)
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+};
+
+const cleanCode = (s) => {
+    if (!s) return "";
+    return String(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
+};
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -82,22 +99,6 @@ export default async function handler(req, res) {
         return isNaN(num) ? defaultVal : num;
     };
 
-    const normalizeStr = (s) => {
-        if (!s) return "";
-        return String(s)
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-z0-9]/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-    };
-
-    // Limpieza de claves alfanuméricas (ej: "DOTA-10M-2FMX-1-00101" -> "DOTA10M2FMX100101")
-    const cleanCode = (s) => {
-        if (!s) return "";
-        return String(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
-    };
 
     // Mapeo automático de nombres descriptivos a códigos de configuración técnica
     const CONFIG_ALIASES = {
