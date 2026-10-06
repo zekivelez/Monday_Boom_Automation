@@ -350,22 +350,35 @@ export default async function handler(req, res) {
             }
         }
 
-        console.log(`[Paso 5]: Consultando SKUs para ${todosMaterialesIds.length} materiales en Catálogo (18432236328)...`);
+        console.log(`[Paso 5]: Consultando SKUs y Proveedores para ${todosMaterialesIds.length} materiales en Catálogo (18432236328)...`);
         const catalogoArticulos = await fetchItemsByIds(todosMaterialesIds);
         const articulosMap = new Map();
         catalogoArticulos.forEach(art => {
             const skuCol = art.column_values?.find(c => c.id === "text_mm7ebpck");
+            const provPrinCol = art.column_values?.find(c => c.id === "dropdown_mm7ezyff");
+            const provAltCol = art.column_values?.find(c => c.id === "dropdown_mm7epfbk");
+            const codProvCol = art.column_values?.find(c => c.id === "text_mm7epwa2");
+
             const skuVal = extractColText(skuCol);
-            articulosMap.set(String(art.id), {
+            const provPrincipalVal = extractColText(provPrinCol);
+            const provAlternoVal = extractColText(provAltCol);
+            const codProvVal = extractColText(codProvCol);
+
+            const artData = {
                 id: art.id,
                 name: art.name,
-                sku: skuVal || ""
-            });
+                sku: skuVal || "",
+                proveedorPrincipal: provPrincipalVal || "SIN ASIGNAR",
+                proveedorAlterno: provAlternoVal || "-",
+                codigoProveedor: codProvVal || "-"
+            };
+
+            articulosMap.set(String(art.id), artData);
             if (skuVal) {
-                articulosMap.set(normalizeStr(art.name), { sku: skuVal });
+                articulosMap.set(normalizeStr(art.name), artData);
             }
         });
-        console.log(`[ARTICULOS]: ${articulosMap.size} artículos indexados con SKU.`);
+        console.log(`[ARTICULOS]: ${articulosMap.size} artículos indexados con SKU y Proveedores.`);
 
         // =========================================================================
         // PASO 6: Construir la Estructura de Explosión (Submódulos -> Materiales)
@@ -438,14 +451,25 @@ export default async function handler(req, res) {
                         ? `${mat.name}. ${nombreMaterial}`
                         : nombreMaterial;
 
-                    // Extraer SKU desde el catálogo consultado
+                    // Extraer SKU y datos de Proveedor desde el catálogo consultado
                     let skuFinal = "";
+                    let provPrincipalFinal = "SIN ASIGNAR";
+                    let provAlternoFinal = "-";
+                    let codProveedorFinal = "-";
+
                     const linkedArtId = relMaterialCol ? getLinkedIds(relMaterialCol)[0] : null;
+                    let artInfo = null;
                     if (linkedArtId && articulosMap.has(String(linkedArtId))) {
-                        skuFinal = articulosMap.get(String(linkedArtId))?.sku || "";
+                        artInfo = articulosMap.get(String(linkedArtId));
+                    } else if (nombreMaterial && articulosMap.has(normalizeStr(nombreMaterial))) {
+                        artInfo = articulosMap.get(normalizeStr(nombreMaterial));
                     }
-                    if (!skuFinal && nombreMaterial) {
-                        skuFinal = articulosMap.get(normalizeStr(nombreMaterial))?.sku || "";
+
+                    if (artInfo) {
+                        skuFinal = artInfo.sku || "";
+                        provPrincipalFinal = artInfo.proveedorPrincipal || "SIN ASIGNAR";
+                        provAlternoFinal = artInfo.proveedorAlterno || "-";
+                        codProveedorFinal = artInfo.codigoProveedor || "-";
                     }
 
                     const cantUnit = extractColNumber(numCol, 1);
@@ -454,25 +478,31 @@ export default async function handler(req, res) {
 
                     const matObj = {
                         sku: skuFinal || "S/SKU",
+                        codigoProveedor: codProveedorFinal || "-",
                         nombre: nombreConNumero,
                         nombreBase: nombreMaterial,
                         unidad,
                         cantUnitaria: cantUnit,
-                        cantTotal: cantTotalMat
+                        cantTotal: cantTotalMat,
+                        proveedorPrincipal: provPrincipalFinal || "SIN ASIGNAR",
+                        proveedorAlterno: provAlternoFinal || "-"
                     };
 
                     subItemObj.materiales.push(matObj);
 
-                    // Consolidar en lista de compras/almacén agrupado por nombre real del material
+                    // Consolidar en lista de compras/almacén agrupado por clave única (SKU o Nombre)
                     const claveConsolidado = skuFinal ? `${skuFinal}_${nombreMaterial}` : nombreMaterial;
                     if (consolidadoMateriales[claveConsolidado]) {
                         consolidadoMateriales[claveConsolidado].cantTotal += cantTotalMat;
                     } else {
                         consolidadoMateriales[claveConsolidado] = {
                             sku: skuFinal || "S/SKU",
+                            codigoProveedor: codProveedorFinal || "-",
                             nombre: nombreMaterial,
                             unidad,
-                            cantTotal: cantTotalMat
+                            cantTotal: cantTotalMat,
+                            proveedorPrincipal: provPrincipalFinal || "SIN ASIGNAR",
+                            proveedorAlterno: provAlternoFinal || "-"
                         };
                     }
                 }
@@ -484,12 +514,12 @@ export default async function handler(req, res) {
         console.log(`[Consolidación]: ${desgloses.length} submódulos procesados. ${Object.keys(consolidadoMateriales).length} materiales únicos consolidados.`);
 
         // =========================================================================
-        // PASO 5: Generar el Documento PDF Oficial de Producción
+        // PASO 7: Generar el Documento PDF Oficial de Lista para Compras
         // =========================================================================
-        console.log("[Paso 5]: Generando documento PDF corporativo...");
+        console.log("[Paso 7]: Generando Lista de Compras en PDF (agrupada por proveedor)...");
         const arrayConsolidado = Object.values(consolidadoMateriales);
 
-        const pdfBytes = await generateBOMReportPdf({
+        const pdfBytes = await generateComprasReportPdf({
             orderName,
             producto: productoSeleccionado,
             configNombre: configNombreVisible,
@@ -501,7 +531,7 @@ export default async function handler(req, res) {
 
         console.log(`[PDF]: Generado (${pdfBytes.length} bytes). Subiendo a PRUEBA API (file_mm7m2b35)...`);
         const safeOrderFile = orderName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const uploadRes = await uploadPdfToMonday(pulseId, token, pdfBytes, `BOM_${safeOrderFile}.pdf`);
+        const uploadRes = await uploadPdfToMonday(pulseId, token, pdfBytes, `LISTA_COMPRAS_${safeOrderFile}.pdf`);
 
         const pdfSubido = Boolean(uploadRes && !uploadRes.errors);
         console.log(`[PDF]: Resultado de subida: ${pdfSubido ? 'EXITOSO' : 'FALLIDO'}`);
@@ -558,7 +588,8 @@ async function uploadPdfToMonday(itemId, token, pdfBytes, fileName) {
 }
 
 // Función de diseño y generación del reporte PDF corporativo
-async function generateBOMReportPdf({ orderName, producto, configNombre, configCodigo, cantidadEquipos, desgloses, consolidado }) {
+// Función de diseño y generación del reporte PDF corporativo para Lista de Compras
+async function generateComprasReportPdf({ orderName, producto, configNombre, configCodigo, cantidadEquipos, consolidado }) {
     const pdfDoc = await PDFDocument.create();
     let page = pdfDoc.addPage([612, 792]); // Tamaño Carta estándar
     const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -579,13 +610,15 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     const { width, height } = page.getSize();
     let y = height - 30;
 
-    // Color corporativo solicitado: #0D72B7 (R: 13, G: 114, B: 183)
-    const primaryColor = rgb(13 / 255, 114 / 255, 183 / 255);
-    const secondaryColor = rgb(0.12, 0.28, 0.48); // Azul marino elegante de apoyo
-    const headerBgLight = rgb(0.93, 0.96, 0.99);  // Fondo tenue azul para jerarquía
+    // Colores corporativos Transtools
+    const primaryColor = rgb(13 / 255, 114 / 255, 183 / 255);       // Azul oficial #0D72B7
+    const secondaryColor = rgb(0.10, 0.22, 0.38);                     // Azul marino institucional
+    const headerBgLight = rgb(0.93, 0.96, 0.99);                      // Fondo tenue azul para tablas
+    const alertAmberColor = rgb(0.85, 0.45, 0.12);                    // Ámbar/Naranja para ítems sin proveedor
     const darkGray = rgb(0.18, 0.18, 0.18);
-    const lightGray = rgb(0.94, 0.95, 0.97);
+    const lightGray = rgb(0.96, 0.97, 0.98);
     const borderColor = rgb(0.80, 0.84, 0.90);
+    const white = rgb(1, 1, 1);
 
     const safeText = (text) => {
         if (!text) return "";
@@ -602,16 +635,15 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     };
 
     const drawHeader = () => {
-        // Altura de cabecera limpia
         const headerHeight = 44;
         
-        // Fondo blanco para que el logotipo azul resalte perfectamente
+        // Caja superior blanca para logo y encabezado
         page.drawRectangle({
             x: 35,
             y: y - 10,
             width: width - 70,
             height: headerHeight,
-            color: rgb(1, 1, 1),
+            color: white,
             borderColor: borderColor,
             borderWidth: 0.8
         });
@@ -625,7 +657,7 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
             color: primaryColor
         });
 
-        // Dibujar Logotipo Oficial destacado a la izquierda
+        // Logotipo Oficial
         if (logoImage) {
             const logoDims = logoImage.scaleToFit(140, 32);
             page.drawImage(logoImage, {
@@ -636,33 +668,42 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
             });
         }
 
-        // Título del reporte a la derecha (sin repetir la palabra 'TRANSTOOLS')
-        const titleText = "EXPLOSIÓN DE MATERIALES (BOM MODULAR)";
+        // Título del documento a la derecha
+        const titleText = "LISTA DE MATERIALES PARA COMPRAS";
         const titleWidth = fontBold.widthOfTextAtSize(titleText, 11);
         page.drawText(titleText, {
             x: width - 45 - titleWidth,
-            y: y + 8,
+            y: y + 9,
             size: 11,
             font: fontBold,
             color: primaryColor
         });
 
+        const subtitleText = "REQUERIMIENTO CONSOLIDADO DE PRODUCCIÓN";
+        const subtitleWidth = fontRegular.widthOfTextAtSize(subtitleText, 7.5);
+        page.drawText(subtitleText, {
+            x: width - 45 - subtitleWidth,
+            y: y - 2,
+            size: 7.5,
+            font: fontRegular,
+            color: darkGray
+        });
+
         y -= 48;
 
-        // Fila 1 de Metadatos
+        // Metadatos de la Orden de Trabajo
         page.drawText(`Orden: ${safeText(orderName)}`, { x: 38, y, size: 9, font: fontBold, color: darkGray });
-        page.drawText(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, { x: width - 150, y, size: 8.5, font: fontRegular, color: darkGray });
+        page.drawText(`Fecha Emisión: ${new Date().toLocaleDateString('es-MX')}`, { x: width - 165, y, size: 8.5, font: fontRegular, color: darkGray });
         y -= 13;
 
-        // Fila 2 de Metadatos
         const prodTxt = producto ? `Producto: ${safeText(producto)}` : "";
         page.drawText(prodTxt, { x: 38, y, size: 8.5, font: fontRegular, color: darkGray });
-        page.drawText(`Cant. a Fabricar: ${cantidadEquipos}`, { x: width - 170, y, size: 9, font: fontBold, color: primaryColor });
+        page.drawText(`Cant. a Fabricar: ${cantidadEquipos} ${cantidadEquipos === 1 ? 'Equipo' : 'Equipos'}`, { x: width - 165, y, size: 9, font: fontBold, color: primaryColor });
         y -= 13;
 
-        // Fila 3 de Metadatos: Configuración y Código Técnico
         const confTxt = `Configuración: ${safeText(configNombre)} (${safeText(configCodigo)})`;
         page.drawText(confTxt, { x: 38, y, size: 8.5, font: fontBold, color: primaryColor });
+        page.drawText(`Partidas Totales: ${consolidado.length}`, { x: width - 165, y, size: 8.5, font: fontBold, color: darkGray });
         y -= 16;
 
         page.drawLine({
@@ -677,86 +718,263 @@ async function generateBOMReportPdf({ orderName, producto, configNombre, configC
     drawHeader();
 
     // =========================================================================
-    // SECCIÓN 1: Desglose por Módulo / Submódulo y sus Materiales
+    // AGRUPACIÓN INTELIGENTE POR PROVEEDOR PRINCIPAL
     // =========================================================================
-    for (const sub of desgloses) {
+    const gruposPorProveedor = {};
+    for (const mat of consolidado) {
+        const rawProv = (mat.proveedorPrincipal && String(mat.proveedorPrincipal).trim() !== "" && mat.proveedorPrincipal !== "SIN ASIGNAR")
+            ? String(mat.proveedorPrincipal).trim()
+            : "SIN PROVEEDOR ASIGNADO (POR COTIZAR)";
+        if (!gruposPorProveedor[rawProv]) {
+            gruposPorProveedor[rawProv] = [];
+        }
+        gruposPorProveedor[rawProv].push(mat);
+    }
+
+    // Ordenar alfabéticamente dejando "SIN PROVEEDOR ASIGNADO" al final
+    const nombresProveedores = Object.keys(gruposPorProveedor).sort((a, b) => {
+        const aSin = a.startsWith("SIN PROVEEDOR");
+        const bSin = b.startsWith("SIN PROVEEDOR");
+        if (aSin && !bSin) return 1;
+        if (!aSin && bSin) return -1;
+        return a.localeCompare(b, 'es');
+    });
+
+    // Ordenar materiales dentro de cada proveedor por nombre
+    for (const p of nombresProveedores) {
+        gruposPorProveedor[p].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", 'es'));
+    }
+
+    // Función auxiliar para dibujar los encabezados de columnas de la tabla
+    const drawTableColumnHeaders = () => {
+        page.drawRectangle({
+            x: 35,
+            y: y - 3,
+            width: width - 70,
+            height: 14,
+            color: headerBgLight
+        });
+
+        page.drawText("#", { x: 39, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("CÓD. PROVEEDOR", { x: 56, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("SKU INTERNO", { x: 135, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("DESCRIPCIÓN DEL MATERIAL", { x: 200, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("U.M.", { x: 385, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("TOTAL REQ.", { x: 418, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
+        page.drawText("PROV. ALTERNO", { x: 470, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("[✓]", { x: 558, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+
+        page.drawLine({
+            start: { x: 35, y: y - 3 },
+            end: { x: width - 35, y: y - 3 },
+            color: borderColor,
+            thickness: 0.5
+        });
+
+        y -= 15;
+    };
+
+    let partidaGlobalContador = 0;
+
+    for (const prov of nombresProveedores) {
+        const itemsProv = gruposPorProveedor[prov];
+        const isSinProveedor = prov.startsWith("SIN PROVEEDOR");
+
+        // Espacio vertical mínimo requerido para banner + columnas + 1 renglón (~55 pt)
         if (y < 85) {
             page = pdfDoc.addPage([612, 792]);
             y = 750;
             drawHeader();
         }
 
-        // Encabezado de dos niveles: MÓDULO y SUBMÓDULO clarificados
+        // Banner de encabezado del Proveedor
         page.drawRectangle({
             x: 35,
-            y: y - 10,
+            y: y - 6,
             width: width - 70,
-            height: 25,
-            color: primaryColor
+            height: 18,
+            color: isSinProveedor ? alertAmberColor : primaryColor
         });
 
-        // Nivel 1: MÓDULO (Línea superior)
-        const moduloTxt = `${sub.filaNumero}. MÓDULO: ${safeText(sub.moduloNombre || "GENERAL")}`;
-        page.drawText(truncate(moduloTxt, 340, fontBold, 7.5), { x: 42, y: y + 3, size: 7.5, font: fontBold, color: rgb(1, 1, 1) });
+        const bannerTitle = isSinProveedor
+            ? "⚠️ MATERIALES SIN PROVEEDOR ASIGNADO (REQUIERE COTIZACIÓN)"
+            : `■ PROVEEDOR PRINCIPAL: ${safeText(prov).toUpperCase()}`;
 
-        // Totalización a la derecha
-        const totalReqTxt = `Cant. x Equipo: ${sub.cantidadPorEquipo} | Total Req: ${sub.cantidadTotalParaOrden}`;
-        page.drawText(totalReqTxt, { x: width - 210, y: y + 3, size: 7.5, font: fontBold, color: rgb(1, 1, 1) });
+        page.drawText(truncate(bannerTitle, 400, fontBold, 8), {
+            x: 42,
+            y: y,
+            size: 8,
+            font: fontBold,
+            color: white
+        });
 
-        // Nivel 2: SUBMÓDULO (Línea inferior destacada)
-        const submoduloTxt = `   SUBMÓDULO: ${safeText(sub.submoduloNombre || sub.nombre)}`;
-        page.drawText(truncate(submoduloTxt, 480, fontRegular, 7.2), { x: 42, y: y - 7, size: 7.2, font: fontRegular, color: rgb(0.92, 0.96, 1) });
+        const countTxt = `${itemsProv.length} ${itemsProv.length === 1 ? 'partida' : 'partidas'}`;
+        page.drawText(countTxt, {
+            x: width - 110,
+            y: y,
+            size: 7.5,
+            font: fontBold,
+            color: white
+        });
 
-        y -= 26;
+        y -= 21;
 
-        if (sub.materiales && sub.materiales.length > 0) {
-            // Encabezados de tabla de materiales (Con Columna SKU)
-            page.drawText("SKU", { x: 42, y, size: 7, font: fontBold, color: primaryColor });
-            page.drawText("MATERIAL / PIEZA", { x: 105, y, size: 7, font: fontBold, color: darkGray });
-            page.drawText("U.M.", { x: 395, y, size: 7, font: fontBold, color: darkGray });
-            page.drawText("CANT. UNIT.", { x: 440, y, size: 7, font: fontBold, color: darkGray });
-            page.drawText("TOTAL ORDEN", { x: 505, y, size: 7, font: fontBold, color: primaryColor });
-            y -= 10;
+        // Encabezados de la tabla
+        drawTableColumnHeaders();
 
-            sub.materiales.forEach(mat => {
-                if (y < 42) {
-                    page = pdfDoc.addPage([612, 792]);
-                    y = 750;
-                    drawHeader();
-                }
+        // Renglones de materiales del proveedor
+        let subIndex = 0;
+        for (const mat of itemsProv) {
+            partidaGlobalContador++;
+            subIndex++;
 
-                const matSku = truncate(mat.sku || "S/SKU", 58, fontBold, 7);
-                const matName = truncate(mat.nombre, 280, fontRegular, 7.2);
-                const matUm = safeText(mat.unidad);
-                const matUnit = mat.cantUnitaria.toLocaleString('es-MX', { maximumFractionDigits: 2 });
-                const matTot = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+            if (y < 42) {
+                page = pdfDoc.addPage([612, 792]);
+                y = 750;
+                drawHeader();
+                drawTableColumnHeaders();
+            }
 
-                page.drawText(matSku, { x: 42, y, size: 7, font: fontBold, color: primaryColor });
-                page.drawText(matName, { x: 105, y, size: 7.2, font: fontRegular, color: darkGray });
-                page.drawText(matUm, { x: 395, y, size: 7.2, font: fontRegular, color: darkGray });
-                page.drawText(matUnit, { x: 445, y, size: 7.2, font: fontRegular, color: darkGray });
-                page.drawText(matTot, { x: 510, y, size: 7.2, font: fontBold, color: primaryColor });
-
-                page.drawLine({
-                    start: { x: 38, y: y - 2 },
-                    end: { x: width - 38, y: y - 2 },
-                    color: borderColor,
-                    thickness: 0.3
+            // Fondo alternado (cebra) para facilitar lectura
+            if (subIndex % 2 === 0) {
+                page.drawRectangle({
+                    x: 35,
+                    y: y - 3,
+                    width: width - 70,
+                    height: 13,
+                    color: lightGray
                 });
+            }
 
-                y -= 12;
+            const numStr = String(partidaGlobalContador);
+            const codProvStr = truncate(mat.codigoProveedor || "-", 72, fontRegular, 6.8);
+            const skuStr = truncate(mat.sku || "S/SKU", 58, fontBold, 6.8);
+            const descStr = truncate(mat.nombre, 180, fontRegular, 7);
+            const umStr = safeText(mat.unidad);
+            const cantStr = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+            const altProvStr = truncate(mat.proveedorAlterno || "-", 82, fontRegular, 6.8);
+
+            page.drawText(numStr, { x: 39, y, size: 6.8, font: fontRegular, color: darkGray });
+            page.drawText(codProvStr, { x: 56, y, size: 6.8, font: fontRegular, color: darkGray });
+            page.drawText(skuStr, { x: 135, y, size: 6.8, font: fontBold, color: primaryColor });
+            page.drawText(descStr, { x: 200, y, size: 7, font: fontRegular, color: darkGray });
+            page.drawText(umStr, { x: 385, y, size: 6.8, font: fontRegular, color: darkGray });
+            page.drawText(cantStr, { x: 420, y, size: 7, font: fontBold, color: primaryColor });
+            page.drawText(altProvStr, { x: 470, y, size: 6.8, font: fontRegular, color: rgb(0.35, 0.35, 0.35) });
+
+            // Casilla de verificación para compras / almacén [ ]
+            page.drawRectangle({
+                x: 559,
+                y: y - 1,
+                width: 8,
+                height: 8,
+                borderColor: rgb(0.65, 0.65, 0.65),
+                borderWidth: 0.7,
+                color: white
             });
-        } else {
-            page.drawText("    (Submódulo sin desglose atómico en subelementos)", { x: 45, y, size: 7.5, font: fontRegular, color: darkGray });
-            y -= 12;
+
+            // Línea divisoria suave
+            page.drawLine({
+                start: { x: 35, y: y - 3 },
+                end: { x: width - 35, y: y - 3 },
+                color: borderColor,
+                thickness: 0.3
+            });
+
+            y -= 13;
         }
 
-        y -= 6;
+        y -= 8; // Separación entre proveedores
     }
 
     // =========================================================================
-    // SECCIÓN 2: Resumen Consolidado omitido (enfoque exclusivo en desglose modular)
+    // SECCIÓN FINAL: Resumen de Requisición y Cuadro de Firmas
     // =========================================================================
+    if (y < 95) {
+        page = pdfDoc.addPage([612, 792]);
+        y = 750;
+        drawHeader();
+    }
+
+    const totalProveedoresAsignados = nombresProveedores.filter(p => !p.startsWith("SIN PROVEEDOR")).length;
+    const totalPiezasVal = consolidado.reduce((acc, m) => acc + (m.cantTotal || 0), 0);
+
+    // Caja de Resumen
+    page.drawRectangle({
+        x: 35,
+        y: y - 8,
+        width: width - 70,
+        height: 20,
+        color: headerBgLight,
+        borderColor: borderColor,
+        borderWidth: 0.6
+    });
+
+    const summaryTxt = `RESUMEN DE REQUISICIÓN:  ${totalProveedoresAsignados} Proveedores Asignados  |  ${consolidado.length} Partidas Únicas  |  ${totalPiezasVal.toLocaleString('es-MX', { maximumFractionDigits: 2 })} Unidades Requeridas`;
+    page.drawText(summaryTxt, {
+        x: 45,
+        y: y - 2,
+        size: 7.5,
+        font: fontBold,
+        color: primaryColor
+    });
+
+    y -= 38;
+
+    // Firmas de Autorización
+    const colWidth = (width - 70) / 3;
+    const firmas = [
+        { cargo: "SOLICITÓ", depto: "Ingeniería / Producción" },
+        { cargo: "REVISÓ", depto: "Almacén General" },
+        { cargo: "AUTORIZÓ", depto: "Compras / Adquisiciones" }
+    ];
+
+    firmas.forEach((f, idx) => {
+        const xBase = 35 + idx * colWidth + 15;
+        const lineWidth = colWidth - 30;
+        page.drawLine({
+            start: { x: xBase, y: y },
+            end: { x: xBase + lineWidth, y: y },
+            color: rgb(0.4, 0.4, 0.4),
+            thickness: 0.7
+        });
+        const cargoWidth = fontBold.widthOfTextAtSize(f.cargo, 7.5);
+        page.drawText(f.cargo, {
+            x: xBase + (lineWidth - cargoWidth) / 2,
+            y: y - 10,
+            size: 7.5,
+            font: fontBold,
+            color: darkGray
+        });
+        const deptoWidth = fontRegular.widthOfTextAtSize(f.depto, 6.8);
+        page.drawText(f.depto, {
+            x: xBase + (lineWidth - deptoWidth) / 2,
+            y: y - 19,
+            size: 6.8,
+            font: fontRegular,
+            color: rgb(0.45, 0.45, 0.45)
+        });
+    });
+
+    // =========================================================================
+    // NUMERACIÓN DE PÁGINAS (Página X de Y)
+    // =========================================================================
+    const allPages = pdfDoc.getPages();
+    const totalPages = allPages.length;
+    allPages.forEach((p, idx) => {
+        const footerTxt = `Transtools - Requerimiento de Compras | Página ${idx + 1} de ${totalPages}`;
+        const txtWidth = fontRegular.widthOfTextAtSize(footerTxt, 7);
+        p.drawText(footerTxt, {
+            x: (width - txtWidth) / 2,
+            y: 15,
+            size: 7,
+            font: fontRegular,
+            color: rgb(0.5, 0.5, 0.5)
+        });
+    });
 
     return await pdfDoc.save();
 }
+
+// Alias de compatibilidad
+const generateBOMReportPdf = generateComprasReportPdf;
