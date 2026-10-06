@@ -622,7 +622,12 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
 
     const safeText = (text) => {
         if (!text) return "";
-        return String(text).replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
+        return String(text)
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "") // Quitar diacríticos/acentos
+            .replace(/[^\x20-\x7E]/g, " ")     // Solo caracteres ASCII seguros para WinAnsi estándar
+            .replace(/\s+/g, " ")
+            .trim();
     };
 
     const truncate = (text, maxWidth, font, size) => {
@@ -679,7 +684,7 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
             color: primaryColor
         });
 
-        const subtitleText = "REQUERIMIENTO CONSOLIDADO DE PRODUCCIÓN";
+        const subtitleText = "REQUERIMIENTO CONSOLIDADO DE PRODUCCION";
         const subtitleWidth = fontRegular.widthOfTextAtSize(subtitleText, 7.5);
         page.drawText(subtitleText, {
             x: width - 45 - subtitleWidth,
@@ -693,7 +698,7 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
 
         // Metadatos de la Orden de Trabajo
         page.drawText(`Orden: ${safeText(orderName)}`, { x: 38, y, size: 9, font: fontBold, color: darkGray });
-        page.drawText(`Fecha Emisión: ${new Date().toLocaleDateString('es-MX')}`, { x: width - 165, y, size: 8.5, font: fontRegular, color: darkGray });
+        page.drawText(`Fecha Emision: ${new Date().toLocaleDateString('es-MX')}`, { x: width - 165, y, size: 8.5, font: fontRegular, color: darkGray });
         y -= 13;
 
         const prodTxt = producto ? `Producto: ${safeText(producto)}` : "";
@@ -701,7 +706,7 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         page.drawText(`Cant. a Fabricar: ${cantidadEquipos} ${cantidadEquipos === 1 ? 'Equipo' : 'Equipos'}`, { x: width - 165, y, size: 9, font: fontBold, color: primaryColor });
         y -= 13;
 
-        const confTxt = `Configuración: ${safeText(configNombre)} (${safeText(configCodigo)})`;
+        const confTxt = `Configuracion: ${safeText(configNombre)} (${safeText(configCodigo)})`;
         page.drawText(confTxt, { x: 38, y, size: 8.5, font: fontBold, color: primaryColor });
         page.drawText(`Partidas Totales: ${consolidado.length}`, { x: width - 165, y, size: 8.5, font: fontBold, color: darkGray });
         y -= 16;
@@ -756,13 +761,13 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         });
 
         page.drawText("#", { x: 39, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("CÓD. PROVEEDOR", { x: 56, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("COD. PROVEEDOR", { x: 56, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("SKU INTERNO", { x: 135, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("DESCRIPCIÓN DEL MATERIAL", { x: 200, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("DESCRIPCION DEL MATERIAL", { x: 200, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("U.M.", { x: 385, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("TOTAL REQ.", { x: 418, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
         page.drawText("PROV. ALTERNO", { x: 470, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("[✓]", { x: 558, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("[ ]", { x: 558, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
 
         page.drawLine({
             start: { x: 35, y: y - 3 },
@@ -797,8 +802,8 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         });
 
         const bannerTitle = isSinProveedor
-            ? "⚠️ MATERIALES SIN PROVEEDOR ASIGNADO (REQUIERE COTIZACIÓN)"
-            : `■ PROVEEDOR PRINCIPAL: ${safeText(prov).toUpperCase()}`;
+            ? ">> MATERIALES SIN PROVEEDOR ASIGNADO (REQUIERE COTIZACION)"
+            : `>> PROVEEDOR PRINCIPAL: ${safeText(prov).toUpperCase()}`;
 
         page.drawText(truncate(bannerTitle, 400, fontBold, 8), {
             x: 42,
@@ -910,7 +915,7 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         borderWidth: 0.6
     });
 
-    const summaryTxt = `RESUMEN DE REQUISICIÓN:  ${totalProveedoresAsignados} Proveedores Asignados  |  ${consolidado.length} Partidas Únicas  |  ${totalPiezasVal.toLocaleString('es-MX', { maximumFractionDigits: 2 })} Unidades Requeridas`;
+    const summaryTxt = `RESUMEN DE REQUISICION:  ${totalProveedoresAsignados} Proveedores Asignados  |  ${consolidado.length} Partidas Unicas  |  ${totalPiezasVal.toLocaleString('es-MX', { maximumFractionDigits: 2 })} Unidades Requeridas`;
     page.drawText(summaryTxt, {
         x: 45,
         y: y - 2,
@@ -924,9 +929,9 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
     // Firmas de Autorización
     const colWidth = (width - 70) / 3;
     const firmas = [
-        { cargo: "SOLICITÓ", depto: "Ingeniería / Producción" },
-        { cargo: "REVISÓ", depto: "Almacén General" },
-        { cargo: "AUTORIZÓ", depto: "Compras / Adquisiciones" }
+        { cargo: "SOLICITO", depto: "Ingenieria / Produccion" },
+        { cargo: "REVISO", depto: "Almacen General" },
+        { cargo: "AUTORIZO", depto: "Compras / Adquisiciones" }
     ];
 
     firmas.forEach((f, idx) => {
@@ -962,7 +967,7 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
     const allPages = pdfDoc.getPages();
     const totalPages = allPages.length;
     allPages.forEach((p, idx) => {
-        const footerTxt = `Transtools - Requerimiento de Compras | Página ${idx + 1} de ${totalPages}`;
+        const footerTxt = `Transtools - Requerimiento de Compras | Pagina ${idx + 1} de ${totalPages}`;
         const txtWidth = fontRegular.widthOfTextAtSize(footerTxt, 7);
         p.drawText(footerTxt, {
             x: (width - txtWidth) / 2,
