@@ -350,6 +350,54 @@ export default async function handler(req, res) {
             }
         }
 
+        const inferirFamilia = (sku, nombre) => {
+            const s = String(sku || "").toUpperCase().trim();
+            if (s.startsWith("AC") || s.startsWith("PTR") || s.startsWith("VIG") || s.startsWith("SOL") || s.startsWith("LAM") || s.startsWith("CAN")) return "ACEROS Y PERFILES";
+            if (s.startsWith("TORN") || s.startsWith("TUER") || s.startsWith("ROND") || s.startsWith("PIJA")) return "TORNILLERIA Y FIJACION";
+            if (s.startsWith("SNEU") || s.startsWith("VALV") || s.startsWith("MANG") || s.startsWith("CODO") || s.startsWith("NIPL")) return "NEUMATICA Y FRENOS";
+            if (s.startsWith("SELE") || s.startsWith("CAB") || s.startsWith("PLAF")) return "ELECTRICO";
+            if (s.startsWith("SUSP") || s.startsWith("EJE")) return "SUSPENSION Y EJES";
+            if (s.startsWith("LYR") || s.startsWith("LLA") || s.startsWith("RIN")) return "LLANTAS Y RINES";
+            if (s.startsWith("ACOP") || s.startsWith("QUIN") || s.startsWith("ARGO")) return "QUINTA RUEDA Y ACOPLE";
+            if (s.startsWith("PUBL") || s.startsWith("CALC") || s.startsWith("ROT")) return "PUBLICIDAD Y ROTULOS";
+            if (s.startsWith("CONS") || s.startsWith("SOLD") || s.startsWith("DISC")) return "CONSUMIBLES Y TALLER";
+            if (s.startsWith("PINT")) return "PINTURA Y RECUBRIMIENTOS";
+
+            const n = normalizeStr(nombre || "");
+            if (n.includes("placa") || n.includes("solera") || n.includes("viga") || n.includes("canal") || n.includes("ptr") || n.includes("lamina") || n.includes("angulo") || n.includes("redondo") || n.includes("acero")) {
+                return "ACEROS Y PERFILES";
+            }
+            if (n.includes("tornillo") || n.includes("tuerca") || n.includes("rondana") || n.includes("pija") || n.includes("remache") || n.includes("birlo")) {
+                return "TORNILLERIA Y FIJACION";
+            }
+            if (n.includes("valvula") || n.includes("manguera") || n.includes("freno") || n.includes("bushing") || n.includes("codo") || n.includes("conector") || n.includes("niple") || n.includes("tanque de aire") || n.includes("manita") || n.includes("grifo") || n.includes("inserto") || n.includes("tubo de nylon") || n.includes("tee")) {
+                return "NEUMATICA Y FRENOS";
+            }
+            if (n.includes("cable") || n.includes("plafon") || n.includes("electrico") || n.includes("luces") || n.includes("foco") || n.includes("calavera") || n.includes("poli flex") || n.includes("poliflex")) {
+                return "ELECTRICO";
+            }
+            if (n.includes("eje") || n.includes("suspension") || n.includes("muelle") || n.includes("balero") || n.includes("matraca")) {
+                return "SUSPENSION Y EJES";
+            }
+            if (n.includes("llanta") || n.includes("rin")) {
+                return "LLANTAS Y RINES";
+            }
+            if (n.includes("quinta") || n.includes("argolla") || n.includes("perno rey")) {
+                return "QUINTA RUEDA Y ACOPLE";
+            }
+            if (n.includes("calcomania") || n.includes("cinta reflejante") || n.includes("logo") || n.includes("rotulo") || n.includes("placa de identificacion") || n.includes("publicidad") || n.includes("tope")) {
+                return "PUBLICIDAD Y ROTULOS";
+            }
+            if (n.includes("disco") || n.includes("electrodo") || n.includes("argon") || n.includes("alambre") || n.includes("micro alambre") || n.includes("teflon") || n.includes("cincho") || n.includes("boquilla") || n.includes("anillo distribuidor") || n.includes("escudo")) {
+                return "CONSUMIBLES Y TALLER";
+            }
+            if (n.includes("pintura") || n.includes("thinner") || n.includes("primer") || n.includes("esmalte")) {
+                return "PINTURA Y RECUBRIMIENTOS";
+            }
+
+            return "GENERAL / VARIOS";
+        };
+
         console.log(`[Paso 5]: Consultando SKUs y Proveedores para ${todosMaterialesIds.length} materiales en Catálogo (18432236328)...`);
         const catalogoArticulos = await fetchItemsByIds(todosMaterialesIds);
         const articulosMap = new Map();
@@ -364,10 +412,19 @@ export default async function handler(req, res) {
             const provAlternoVal = extractColText(provAltCol);
             const codProvVal = extractColText(codProvCol);
 
+            // Buscar columna explícita de familia o inferir por SKU/nombre
+            const famCol = art.column_values?.find(c => {
+                const idNorm = normalizeStr(c.id || "");
+                return idNorm.includes("familia") || idNorm.includes("categoria") || idNorm.includes("tipo");
+            });
+            const famDirecta = extractColText(famCol) || (art.group?.title && !normalizeStr(art.group.title).includes("grupo") && !normalizeStr(art.group.title).includes("articulos") ? art.group.title : "");
+            const familiaVal = famDirecta || inferirFamilia(skuVal, art.name);
+
             const artData = {
                 id: art.id,
                 name: art.name,
                 sku: skuVal || "",
+                familia: familiaVal,
                 proveedorPrincipal: provPrincipalVal || "SIN ASIGNAR",
                 proveedorAlterno: provAlternoVal || "-",
                 codigoProveedor: codProvVal || "-"
@@ -378,7 +435,7 @@ export default async function handler(req, res) {
                 articulosMap.set(normalizeStr(art.name), artData);
             }
         });
-        console.log(`[ARTICULOS]: ${articulosMap.size} artículos indexados con SKU y Proveedores.`);
+        console.log(`[ARTICULOS]: ${articulosMap.size} artículos indexados con SKU, Familia y Proveedores.`);
 
         // =========================================================================
         // PASO 6: Construir la Estructura de Explosión (Submódulos -> Materiales)
@@ -456,6 +513,7 @@ export default async function handler(req, res) {
                     let provPrincipalFinal = "SIN ASIGNAR";
                     let provAlternoFinal = "-";
                     let codProveedorFinal = "-";
+                    let familiaFinal = "";
 
                     const linkedArtId = relMaterialCol ? getLinkedIds(relMaterialCol)[0] : null;
                     let artInfo = null;
@@ -467,9 +525,14 @@ export default async function handler(req, res) {
 
                     if (artInfo) {
                         skuFinal = artInfo.sku || "";
+                        familiaFinal = artInfo.familia || "";
                         provPrincipalFinal = artInfo.proveedorPrincipal || "SIN ASIGNAR";
                         provAlternoFinal = artInfo.proveedorAlterno || "-";
                         codProveedorFinal = artInfo.codigoProveedor || "-";
+                    }
+
+                    if (!familiaFinal) {
+                        familiaFinal = inferirFamilia(skuFinal, nombreMaterial);
                     }
 
                     const cantUnit = extractColNumber(numCol, 1);
@@ -481,6 +544,7 @@ export default async function handler(req, res) {
                         codigoProveedor: codProveedorFinal || "-",
                         nombre: nombreConNumero,
                         nombreBase: nombreMaterial,
+                        familia: familiaFinal,
                         unidad,
                         cantUnitaria: cantUnit,
                         cantTotal: cantTotalMat,
@@ -499,6 +563,7 @@ export default async function handler(req, res) {
                             sku: skuFinal || "S/SKU",
                             codigoProveedor: codProveedorFinal || "-",
                             nombre: nombreMaterial,
+                            familia: familiaFinal,
                             unidad,
                             cantTotal: cantTotalMat,
                             proveedorPrincipal: provPrincipalFinal || "SIN ASIGNAR",
@@ -718,40 +783,8 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
             thickness: 0.8
         });
         y -= 14;
-    };
 
-    drawHeader();
-
-    // =========================================================================
-    // AGRUPACIÓN INTELIGENTE POR PROVEEDOR PRINCIPAL
-    // =========================================================================
-    const gruposPorProveedor = {};
-    for (const mat of consolidado) {
-        const rawProv = (mat.proveedorPrincipal && String(mat.proveedorPrincipal).trim() !== "" && mat.proveedorPrincipal !== "SIN ASIGNAR")
-            ? String(mat.proveedorPrincipal).trim()
-            : "SIN PROVEEDOR ASIGNADO (POR COTIZAR)";
-        if (!gruposPorProveedor[rawProv]) {
-            gruposPorProveedor[rawProv] = [];
-        }
-        gruposPorProveedor[rawProv].push(mat);
-    }
-
-    // Ordenar alfabéticamente dejando "SIN PROVEEDOR ASIGNADO" al final
-    const nombresProveedores = Object.keys(gruposPorProveedor).sort((a, b) => {
-        const aSin = a.startsWith("SIN PROVEEDOR");
-        const bSin = b.startsWith("SIN PROVEEDOR");
-        if (aSin && !bSin) return 1;
-        if (!aSin && bSin) return -1;
-        return a.localeCompare(b, 'es');
-    });
-
-    // Ordenar materiales dentro de cada proveedor por nombre
-    for (const p of nombresProveedores) {
-        gruposPorProveedor[p].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", 'es'));
-    }
-
-    // Función auxiliar para dibujar los encabezados de columnas de la tabla
-    const drawTableColumnHeaders = () => {
+        // Encabezados de la tabla continua (se repiten en cada página dentro de drawHeader)
         page.drawRectangle({
             x: 35,
             y: y - 3,
@@ -760,13 +793,15 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
             color: headerBgLight
         });
 
-        page.drawText("#", { x: 39, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("COD. PROVEEDOR", { x: 56, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("SKU INTERNO", { x: 135, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("DESCRIPCION DEL MATERIAL", { x: 200, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("U.M.", { x: 385, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("TOTAL REQ.", { x: 418, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
-        page.drawText("PROV. ALTERNO", { x: 470, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("#", { x: 38, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("COD. PROV.", { x: 54, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("SKU INTERNO", { x: 106, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("DESCRIPCION DEL MATERIAL", { x: 150, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("FAMILIA / TIPO", { x: 286, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("U.M.", { x: 360, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("TOTAL REQ.", { x: 382, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
+        page.drawText("PROV. SUGERIDO", { x: 416, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("PROV. ALTERNO", { x: 494, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("[ ]", { x: 558, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
 
         page.drawLine({
@@ -779,117 +814,130 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         y -= 15;
     };
 
-    let partidaGlobalContador = 0;
+    drawHeader();
 
-    for (const prov of nombresProveedores) {
-        const itemsProv = gruposPorProveedor[prov];
-        const isSinProveedor = prov.startsWith("SIN PROVEEDOR");
+    // =========================================================================
+    // ORDENAMIENTO POR FAMILIA (Para mantener aceros juntos, tornillos juntos, etc.)
+    // =========================================================================
+    const ORDEN_FAMILIAS = [
+        "ACEROS Y PERFILES",
+        "SUSPENSION Y EJES",
+        "QUINTA RUEDA Y ACOPLE",
+        "LLANTAS Y RINES",
+        "NEUMATICA Y FRENOS",
+        "ELECTRICO",
+        "TORNILLERIA Y FIJACION",
+        "CONSUMIBLES Y TALLER",
+        "PINTURA Y RECUBRIMIENTOS",
+        "PUBLICIDAD Y ROTULOS",
+        "GENERAL / VARIOS"
+    ];
 
-        // Espacio vertical mínimo requerido para banner + columnas + 1 renglón (~55 pt)
-        if (y < 85) {
+    const getFamiliaRank = (fam) => {
+        const fNorm = normalizeStr(fam || "");
+        const idx = ORDEN_FAMILIAS.findIndex(ofam => normalizeStr(ofam) === fNorm || fNorm.includes(normalizeStr(ofam)));
+        return idx !== -1 ? idx : 999;
+    };
+
+    const itemsOrdenados = [...consolidado].sort((a, b) => {
+        const famA = a.familia || "GENERAL / VARIOS";
+        const famB = b.familia || "GENERAL / VARIOS";
+        const rankA = getFamiliaRank(famA);
+        const rankB = getFamiliaRank(famB);
+
+        if (rankA !== rankB) {
+            return rankA - rankB;
+        }
+
+        // Si son de la misma familia, ordenar alfabéticamente por nombre de material
+        return (a.nombre || "").localeCompare(b.nombre || "", 'es');
+    });
+
+    // =========================================================================
+    // TABLA CONTINUA CORRIDA (Sin banners divisores repetidos)
+    // =========================================================================
+    let partidaContador = 0;
+    const proveedoresUnicosSet = new Set();
+    const familiasUnicasSet = new Set();
+
+    for (const mat of itemsOrdenados) {
+        partidaContador++;
+
+        if (mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-") {
+            proveedoresUnicosSet.add(mat.proveedorPrincipal.trim());
+        }
+        if (mat.familia) {
+            familiasUnicasSet.add(mat.familia.trim());
+        }
+
+        if (y < 42) {
             page = pdfDoc.addPage([612, 792]);
             y = 750;
             drawHeader();
         }
 
-        // Banner de encabezado del Proveedor
-        page.drawRectangle({
-            x: 35,
-            y: y - 6,
-            width: width - 70,
-            height: 18,
-            color: isSinProveedor ? alertAmberColor : primaryColor
-        });
-
-        const bannerTitle = isSinProveedor
-            ? ">> MATERIALES SIN PROVEEDOR ASIGNADO (REQUIERE COTIZACION)"
-            : `>> PROVEEDOR PRINCIPAL: ${safeText(prov).toUpperCase()}`;
-
-        page.drawText(truncate(bannerTitle, 400, fontBold, 8), {
-            x: 42,
-            y: y,
-            size: 8,
-            font: fontBold,
-            color: white
-        });
-
-        const countTxt = `${itemsProv.length} ${itemsProv.length === 1 ? 'partida' : 'partidas'}`;
-        page.drawText(countTxt, {
-            x: width - 110,
-            y: y,
-            size: 7.5,
-            font: fontBold,
-            color: white
-        });
-
-        y -= 21;
-
-        // Encabezados de la tabla
-        drawTableColumnHeaders();
-
-        // Renglones de materiales del proveedor
-        let subIndex = 0;
-        for (const mat of itemsProv) {
-            partidaGlobalContador++;
-            subIndex++;
-
-            if (y < 42) {
-                page = pdfDoc.addPage([612, 792]);
-                y = 750;
-                drawHeader();
-                drawTableColumnHeaders();
-            }
-
-            // Fondo alternado (cebra) para facilitar lectura
-            if (subIndex % 2 === 0) {
-                page.drawRectangle({
-                    x: 35,
-                    y: y - 3,
-                    width: width - 70,
-                    height: 13,
-                    color: lightGray
-                });
-            }
-
-            const numStr = String(partidaGlobalContador);
-            const codProvStr = truncate(mat.codigoProveedor || "-", 72, fontRegular, 6.8);
-            const skuStr = truncate(mat.sku || "S/SKU", 58, fontBold, 6.8);
-            const descStr = truncate(mat.nombre, 180, fontRegular, 7);
-            const umStr = safeText(mat.unidad);
-            const cantStr = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
-            const altProvStr = truncate(mat.proveedorAlterno || "-", 82, fontRegular, 6.8);
-
-            page.drawText(numStr, { x: 39, y, size: 6.8, font: fontRegular, color: darkGray });
-            page.drawText(codProvStr, { x: 56, y, size: 6.8, font: fontRegular, color: darkGray });
-            page.drawText(skuStr, { x: 135, y, size: 6.8, font: fontBold, color: primaryColor });
-            page.drawText(descStr, { x: 200, y, size: 7, font: fontRegular, color: darkGray });
-            page.drawText(umStr, { x: 385, y, size: 6.8, font: fontRegular, color: darkGray });
-            page.drawText(cantStr, { x: 420, y, size: 7, font: fontBold, color: primaryColor });
-            page.drawText(altProvStr, { x: 470, y, size: 6.8, font: fontRegular, color: rgb(0.35, 0.35, 0.35) });
-
-            // Casilla de verificación para compras / almacén [ ]
+        // Fondo alternado (cebra) para lectura fluida
+        if (partidaContador % 2 === 0) {
             page.drawRectangle({
-                x: 559,
-                y: y - 1,
-                width: 8,
-                height: 8,
-                borderColor: rgb(0.65, 0.65, 0.65),
-                borderWidth: 0.7,
-                color: white
+                x: 35,
+                y: y - 3,
+                width: width - 70,
+                height: 13,
+                color: lightGray
             });
-
-            // Línea divisoria suave
-            page.drawLine({
-                start: { x: 35, y: y - 3 },
-                end: { x: width - 35, y: y - 3 },
-                color: borderColor,
-                thickness: 0.3
-            });
-
-            y -= 13;
         }
 
-        y -= 8; // Separación entre proveedores
+        const numStr = String(partidaContador);
+        const codProvStr = truncate(mat.codigoProveedor || "-", 48, fontRegular, 6.8);
+        const skuStr = truncate(mat.sku || "S/SKU", 40, fontBold, 6.8);
+        const descStr = truncate(mat.nombre, 132, fontRegular, 6.8);
+        const famStr = truncate(mat.familia || "GENERAL", 70, fontRegular, 6.8);
+        const umStr = safeText(mat.unidad);
+        const cantStr = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+        
+        const tieneProv = Boolean(mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-");
+        const provSugStr = truncate(tieneProv ? mat.proveedorPrincipal : "POR ASIGNAR", 74, fontRegular, 6.8);
+        const altProvStr = truncate(mat.proveedorAlterno || "-", 60, fontRegular, 6.8);
+
+        page.drawText(numStr, { x: 38, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(codProvStr, { x: 54, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(skuStr, { x: 106, y, size: 6.8, font: fontBold, color: primaryColor });
+        page.drawText(descStr, { x: 150, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(famStr, { x: 286, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(umStr, { x: 360, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(cantStr, { x: 382, y, size: 7, font: fontBold, color: primaryColor });
+        
+        // Proveedor sugerido
+        page.drawText(provSugStr, { 
+            x: 416, 
+            y, 
+            size: 6.8, 
+            font: fontRegular, 
+            color: tieneProv ? darkGray : rgb(0.6, 0.4, 0.2) 
+        });
+        
+        page.drawText(altProvStr, { x: 494, y, size: 6.8, font: fontRegular, color: rgb(0.4, 0.4, 0.4) });
+
+        // Casilla de verificación cuadrada [ ]
+        page.drawRectangle({
+            x: 559,
+            y: y - 1,
+            width: 8,
+            height: 8,
+            borderColor: rgb(0.65, 0.65, 0.65),
+            borderWidth: 0.7,
+            color: white
+        });
+
+        // Línea divisoria suave
+        page.drawLine({
+            start: { x: 35, y: y - 3 },
+            end: { x: width - 35, y: y - 3 },
+            color: borderColor,
+            thickness: 0.3
+        });
+
+        y -= 13;
     }
 
     // =========================================================================
@@ -901,7 +949,7 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         drawHeader();
     }
 
-    const totalProveedoresAsignados = nombresProveedores.filter(p => !p.startsWith("SIN PROVEEDOR")).length;
+    const totalProveedoresAsignados = proveedoresUnicosSet.size;
     const totalPiezasVal = consolidado.reduce((acc, m) => acc + (m.cantTotal || 0), 0);
 
     // Caja de Resumen
@@ -915,11 +963,11 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
         borderWidth: 0.6
     });
 
-    const summaryTxt = `RESUMEN DE REQUISICION:  ${totalProveedoresAsignados} Proveedores Asignados  |  ${consolidado.length} Partidas Unicas  |  ${totalPiezasVal.toLocaleString('es-MX', { maximumFractionDigits: 2 })} Unidades Requeridas`;
+    const summaryTxt = `RESUMEN DE REQUISICION:  ${familiasUnicasSet.size} Familias  |  ${totalProveedoresAsignados} Proveedores Sugeridos  |  ${consolidado.length} Partidas Unicas  |  ${totalPiezasVal.toLocaleString('es-MX', { maximumFractionDigits: 2 })} Unidades Requeridas`;
     page.drawText(summaryTxt, {
         x: 45,
         y: y - 2,
-        size: 7.5,
+        size: 7.2,
         font: fontBold,
         color: primaryColor
     });
