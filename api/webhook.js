@@ -19,6 +19,21 @@ const cleanCode = (s) => {
     return String(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
 };
 
+const parseSecuenciaRank = (sec, fallbackPos = 999999) => {
+    if (sec !== undefined && sec !== null && String(sec).trim() !== "") {
+        const str = String(sec).trim();
+        const match = str.match(/^(\d+(?:\.\d+)?)/);
+        if (match) {
+            return parseFloat(match[1]);
+        }
+        const anyNum = str.match(/(\d+(?:\.\d+)?)/);
+        if (anyNum) {
+            return parseFloat(anyNum[1]);
+        }
+    }
+    return fallbackPos !== undefined ? fallbackPos : 999999;
+};
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -266,10 +281,15 @@ export default async function handler(req, res) {
         }
 
         // Módulos referenciados en los subelementos de BOM MODULAR (columna MODULOS = board_relation_mm7qyye2)
+        // Columna SECUENCIA DE FABRICACION = text_mm7snaqa
         const refsModulos = [];
-        for (const fila of filasBom) {
-            for (const sub of (fila.subitems || [])) {
+        for (let idxFila = 0; idxFila < filasBom.length; idxFila++) {
+            const fila = filasBom[idxFila];
+            const secFila = extractColText(fila.column_values?.find(c => c.id === "text_mm7snaqa"));
+            for (let idxSub = 0; idxSub < (fila.subitems || []).length; idxSub++) {
+                const sub = fila.subitems[idxSub];
                 const sCols = sub.column_values || [];
+                const secSub = extractColText(sCols.find(c => c.id === "text_mm7snaqa"));
                 const ids = getLinkedIds(sCols.find(c => c.id === "board_relation_mm7qyye2"));
                 if (!ids.length) {
                     console.warn(`[BOM MODULAR]: Subelemento "${sub.name}" de "${fila.name}" no tiene MODULO vinculado (board_relation_mm7qyye2 vacío).`);
@@ -277,7 +297,15 @@ export default async function handler(req, res) {
                 }
                 let cant = extractColNumber(sCols.find(c => c.type === "numbers"), 1);
                 if (cant <= 0) cant = 1;
-                ids.forEach(id => refsModulos.push({ moduloId: id, cantidad: cant, bomFila: fila.name }));
+                const secuenciaFabricacion = secSub || secFila || "";
+                const posicionBom = (idxFila + 1) * 100 + (idxSub + 1);
+                ids.forEach(id => refsModulos.push({
+                    moduloId: id,
+                    cantidad: cant,
+                    bomFila: fila.name,
+                    secuenciaFabricacion,
+                    posicionBom
+                }));
             }
         }
 
@@ -318,7 +346,9 @@ export default async function handler(req, res) {
                 submoduloId: c.id,
                 cantidad: (c.cant > 0 ? c.cant : 1) * ref.cantidad,
                 moduloNombre: mod.name,
-                bomFila: ref.bomFila
+                bomFila: ref.bomFila,
+                secuenciaFabricacion: ref.secuenciaFabricacion || extractColText(mod.column_values?.find(col => col.id === "text_mm7snaqa")),
+                posicionBom: ref.posicionBom
             }));
         }
 
@@ -451,6 +481,7 @@ export default async function handler(req, res) {
             const cantSubmodulo = entrada.cantidad;
             const subCols = submoduloEncontrado.column_values || [];
             const codigoSub = extractColText(subCols.find(c => c.id === "text_mm7jphz6")) || submoduloEncontrado.name;
+            const secEntrada = entrada.secuenciaFabricacion || extractColText(subCols.find(col => col.id === "text_mm7snaqa"));
 
             const subItemObj = {
                 filaNumero: String(filaContador),
@@ -459,6 +490,7 @@ export default async function handler(req, res) {
                 codigo: codigoSub,
                 cantidadPorEquipo: cantSubmodulo,
                 cantidadTotalParaOrden: cantSubmodulo * cantidadEquipos,
+                secuenciaFabricacion: secEntrada,
                 materiales: []
             };
 
@@ -466,6 +498,7 @@ export default async function handler(req, res) {
             if (submoduloEncontrado?.subitems && submoduloEncontrado.subitems.length > 0) {
                 for (const mat of submoduloEncontrado.subitems) {
                     const mCols = mat.column_values || [];
+                    const secMaterial = extractColText(mCols.find(col => col.id === "text_mm7snaqa")) || secEntrada;
                     // IDs reales de subelementos en SUBMODULOS
                     const numCol = mCols.find(c => c.id === "numeric_mm7jbpty") || mCols.find(c => c.type === "numbers");
                     const umCol = mCols.find(c => c.id?.includes("unidad") || c.id?.includes("medida") || c.type === "text" || c.type === "dropdown");
@@ -550,7 +583,9 @@ export default async function handler(req, res) {
                         cantUnitaria: cantUnit,
                         cantTotal: cantTotalMat,
                         proveedorPrincipal: provPrincipalFinal || "SIN ASIGNAR",
-                        proveedorAlterno: provAlternoFinal || "-"
+                        proveedorAlterno: provAlternoFinal || "-",
+                        secuenciaFabricacion: secMaterial,
+                        posicionBom: entrada.posicionBom
                     };
 
                     subItemObj.materiales.push(matObj);
@@ -559,6 +594,13 @@ export default async function handler(req, res) {
                     const claveConsolidado = skuFinal ? `${skuFinal}_${nombreMaterial}` : nombreMaterial;
                     if (consolidadoMateriales[claveConsolidado]) {
                         consolidadoMateriales[claveConsolidado].cantTotal += cantTotalMat;
+                        // Si aparece en varios submódulos/etapas, preservar la secuencia más temprana para compras
+                        const prevRank = parseSecuenciaRank(consolidadoMateriales[claveConsolidado].secuenciaFabricacion, consolidadoMateriales[claveConsolidado].posicionBom);
+                        const newRank = parseSecuenciaRank(secMaterial, entrada.posicionBom);
+                        if (newRank < prevRank) {
+                            consolidadoMateriales[claveConsolidado].secuenciaFabricacion = secMaterial;
+                            consolidadoMateriales[claveConsolidado].posicionBom = entrada.posicionBom;
+                        }
                     } else {
                         consolidadoMateriales[claveConsolidado] = {
                             sku: skuFinal || "S/SKU",
@@ -568,7 +610,9 @@ export default async function handler(req, res) {
                             unidad,
                             cantTotal: cantTotalMat,
                             proveedorPrincipal: provPrincipalFinal || "SIN ASIGNAR",
-                            proveedorAlterno: provAlternoFinal || "-"
+                            proveedorAlterno: provAlternoFinal || "-",
+                            secuenciaFabricacion: secMaterial,
+                            posicionBom: entrada.posicionBom
                         };
                     }
                 }
@@ -885,14 +929,28 @@ async function generateComprasReportPdf({ orderName, producto, configNombre, con
     };
 
     const itemsOrdenados = [...consolidado].sort((a, b) => {
-        const rankA = getFamiliaRank(a.familia, a.sku, a.nombre);
-        const rankB = getFamiliaRank(b.familia, b.sku, b.nombre);
+        // 1. Criterio primario: SECUENCIA DE FABRICACION (text_mm7snaqa) del BOM Modular
+        const rankSecA = parseSecuenciaRank(a.secuenciaFabricacion, a.posicionBom);
+        const rankSecB = parseSecuenciaRank(b.secuenciaFabricacion, b.posicionBom);
 
-        if (rankA !== rankB) {
-            return rankA - rankB;
+        if (rankSecA !== rankSecB) {
+            return rankSecA - rankSecB;
         }
 
-        // Si son de la misma familia, ordenar alfabéticamente por descripción
+        if (a.secuenciaFabricacion && b.secuenciaFabricacion && a.secuenciaFabricacion !== b.secuenciaFabricacion) {
+            const cmp = a.secuenciaFabricacion.localeCompare(b.secuenciaFabricacion, 'es', { numeric: true });
+            if (cmp !== 0) return cmp;
+        }
+
+        // 2. Criterio secundario: Agrupación por familia / tipo de material
+        const rankFamA = getFamiliaRank(a.familia, a.sku, a.nombre);
+        const rankFamB = getFamiliaRank(b.familia, b.sku, b.nombre);
+
+        if (rankFamA !== rankFamB) {
+            return rankFamA - rankFamB;
+        }
+
+        // 3. Criterio terciario: Alfabético por descripción
         return (a.nombre || "").localeCompare(b.nombre || "", 'es');
     });
 
