@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/generar-bom"
+    },
+    {
+      "source": "/api/webhook",
+      "destination": "/api/generar-bom"
+    }
+  ]
+}

@@ -1,18 +1,21 @@
 // api/generar-bom.js
-// Endpoint Serverless (Next.js / Vercel) para detonar la generación del BOM de Fabricación
+// Endpoint Serverless (Vercel) para detonar la generación del BOM de Fabricación usando pdf-lib nativo
 
-import path from 'path';
-import fs from 'fs';
-import React from 'react';
-import { renderToStream } from '@react-pdf/renderer';
 import { createMondayClient, uploadPdfToMonday } from '../services/mondayClient.js';
-import { getOrdenFabricacionBomData, BOARD_ORDENES_FABRICACION } from '../services/bomFabricacionService.js';
-import { BomFabricacionPdf } from '../components/BomFabricacionPdf.js';
+import { getOrdenFabricacionBomData, COLUMN_FILE_BOM } from '../services/bomFabricacionService.js';
+import { generateBomFabricacionPdf } from '../services/pdfService.js';
 
 export default async function handler(req, res) {
     // 1. Verificación de Handshake de Monday (Challenge)
-    if (req.method === 'POST' && req.body?.challenge) {
+    if (req.body?.challenge) {
         return res.status(200).json({ challenge: req.body.challenge });
+    }
+    if (req.query?.challenge) {
+        return res.status(200).json({ challenge: req.query.challenge });
+    }
+
+    if (req.method === 'GET') {
+        return res.status(200).json({ status: 'ok', service: 'BOM Fabricación Transtools' });
     }
 
     if (req.method !== 'POST') {
@@ -41,37 +44,18 @@ export default async function handler(req, res) {
         console.log(`[Generar BOM]: Extrayendo datos de la Orden ID ${pulseId}...`);
         const bomData = await getOrdenFabricacionBomData(fetchMonday, pulseId);
 
-        // 3. Ubicar el Logo corporativo Transtools si está en el sistema de archivos
-        let logoPath = path.resolve('Logo-azul.png');
-        if (!fs.existsSync(logoPath)) {
-            logoPath = path.resolve(process.cwd(), 'Logo-azul.png');
-            if (!fs.existsSync(logoPath)) logoPath = null;
-        }
+        // 3. Generar el PDF nativo con pdf-lib (sin pdfkit ni React)
+        console.log("[Generar BOM]: Generando PDF nativo con pdf-lib...");
+        const pdfBytes = await generateBomFabricacionPdf(bomData);
+        console.log(`[Generar BOM]: PDF generado con éxito (${pdfBytes.length} bytes).`);
 
-        // 4. Renderizar el PDF a Stream con @react-pdf/renderer
-        console.log("[Generar BOM]: Renderizando PDF estructurado con @react-pdf/renderer...");
-        const doc = React.createElement(BomFabricacionPdf, {
-            data: bomData,
-            logoPath
-        });
-
-        const stream = await renderToStream(doc);
-        const chunks = [];
-        for await (const chunk of stream) {
-            chunks.push(chunk);
-        }
-        const pdfBuffer = Buffer.concat(chunks);
-        console.log(`[Generar BOM]: PDF renderizado con éxito (${pdfBuffer.length} bytes).`);
-
-        // 5. Determinar la columna de archivos en la Orden de Fabricación
-        // Por defecto busca la columna "BOM DE FABRICACION" o tipo "file"
+        // 4. Subir el PDF a Monday en la columna exacta file_mm7yxtgh
         const safeFolio = (bomData.orden.folio || `OF_${pulseId}`).replace(/[^a-zA-Z0-9_-]/g, '_');
         const fileName = `BOM_FABRICACION_${safeFolio}.pdf`;
+        const targetColumn = bomData.orden.fileColumnId || COLUMN_FILE_BOM || "file_mm7yxtgh";
 
-        // 6. Subir el PDF a Monday en la columna correspondiente
-        const targetFileColumn = bomData.orden.fileColumnId || "file_mm7m2b35";
-        console.log(`[Generar BOM]: Subiendo ${fileName} a Monday (columna: ${targetFileColumn})...`);
-        const uploadResult = await uploadPdfToMonday(pulseId, token, pdfBuffer, fileName, targetFileColumn);
+        console.log(`[Generar BOM]: Subiendo ${fileName} a Monday (columna: ${targetColumn})...`);
+        const uploadResult = await uploadPdfToMonday(pulseId, token, pdfBytes, fileName, targetColumn);
         console.log("[Generar BOM]: Resultado subida Monday:", JSON.stringify(uploadResult));
 
         return res.status(200).json({
@@ -79,7 +63,7 @@ export default async function handler(req, res) {
             folio: bomData.orden.folio,
             cliente: bomData.orden.cliente,
             modulosProcesados: bomData.modulos.length,
-            pdfBytes: pdfBuffer.length,
+            pdfBytes: pdfBytes.length,
             uploadResult
         });
 
