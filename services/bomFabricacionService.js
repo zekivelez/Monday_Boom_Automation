@@ -8,8 +8,9 @@ import {
     normalizeStr
 } from './mondayClient.js';
 
-export const BOARD_ORDENES_FABRICACION = "18433468914";
+export const BOARD_ORDENES_FABRICACION = "18434500734";
 export const BOARD_MODULOS = "18432845727";
+export const COLUMN_FILE_BOM = "file_mm7yxtgh";
 
 const COLS_FRAGMENT = `column_values {
     id
@@ -31,7 +32,14 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
         items (ids: $itemId) {
             id
             name
-            board { id }
+            board {
+                id
+                columns {
+                    id
+                    title
+                    type
+                }
+            }
             ${COLS_FRAGMENT}
             subitems {
                 id
@@ -49,6 +57,7 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
     }
 
     const orderCols = orderItem.column_values || [];
+    const boardCols = orderItem.board?.columns || [];
 
     const getVal = (colIdOrTitle) => {
         const found = orderCols.find(c => c.id === colIdOrTitle || normalizeStr(c.text || "").includes(normalizeStr(colIdOrTitle)));
@@ -75,9 +84,9 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
     const observaciones = getVal("long_text_mm86e3sh") || getVal("OBSERVACIONES");
     const descripcionFactura = getVal("long_text_mm8653ty") || getVal("DESCRIPCION PARA FACTURA");
 
-    // Detectar columna de archivos de la OF (BOM DE FABRICACION)
-    const fileCol = orderCols.find(c => c.type === "file" || normalizeStr(c.id || "").includes("file") || normalizeStr(c.text || "").includes("bom"));
-    const fileColumnId = fileCol?.id || "file_mm7m2b35";
+    // Columna exacta de archivo donde se pega el PDF según especificación
+    const fileColumnId = COLUMN_FILE_BOM;
+    console.log(`[BOM Fabricación]: Columna fija para guardar PDF: ID "${fileColumnId}" en tablero ${BOARD_ORDENES_FABRICACION}`);
 
     // 2. Extraer los subitems de la OF
     const rawSubitems = orderItem.subitems || [];
