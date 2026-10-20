@@ -97,12 +97,12 @@ export const getLinkedIds = (col) => {
     return [];
 };
 
-export const uploadPdfToMonday = async (itemId, token, pdfBytes, fileName) => {
+export const uploadPdfToMonday = async (itemId, token, pdfBytes, fileName, columnId = "file_mm7m2b35") => {
     const form = new FormData();
     const mutation = `mutation ($file: File!) {
         add_file_to_column (
             item_id: ${itemId}, 
-            column_id: "file_mm7m2b35", 
+            column_id: "${columnId}", 
             file: $file
         ) {
             id
