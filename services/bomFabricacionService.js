@@ -111,8 +111,8 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
     for (const sub of rawSubitems) {
         const sCols = sub.column_values || [];
 
-        // Columna Link universal inyectada en Fase 1
-        const colLink = sCols.find(c => c.id === "link_mm89bws8" || c.type === "link");
+        // Columna Link universal inyectada en Fase 1 (link_mm89bws8)
+        const colLink = sCols.find(c => c.id === "link_mm89bws8") || sCols.find(c => c.type === "link");
         let linkUrl = "";
 
         if (colLink?.value) {
@@ -122,7 +122,8 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
             } catch {}
         }
         if (!linkUrl && colLink?.text) {
-            linkUrl = colLink.text.trim();
+            const urlMatch = colLink.text.match(/https?:\/\/[^\s"'<>]+/);
+            linkUrl = urlMatch ? urlMatch[0] : colLink.text.trim();
         }
 
         // Relación con el módulo en el Catálogo de Módulos (18432845727)
@@ -130,13 +131,13 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
         const linkedModuleIds = getLinkedIds(colRelModulo);
         let moduloId = linkedModuleIds[0] || null;
 
-        // Respaldo: si el link URL trae el ID del pulso
+        // Respaldo: si el link URL trae el ID del pulso o item
         if (!moduloId && linkUrl) {
             const match = linkUrl.match(/(?:pulses|items)\/(\d+)/);
             if (match) moduloId = match[1];
         }
 
-        if (moduloId && !linkUrl) {
+        if (moduloId && (!linkUrl || !linkUrl.startsWith("http"))) {
             linkUrl = `https://transtools-team.monday.com/items/${moduloId}`;
         }
 

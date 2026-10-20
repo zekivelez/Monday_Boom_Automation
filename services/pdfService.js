@@ -1,9 +1,35 @@
-// services/pdfService.js
-// Generador del Reporte PDF Oficial de Fabricación utilizando pdf-lib nativo con maquetación milimétrica
-
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
+
+// Helper para incrustar hipervínculo interactivo clickable en el PDF
+const addLinkToPage = (page, pdfDoc, linkUrl, x, y, width, height) => {
+    try {
+        if (!linkUrl || !String(linkUrl).startsWith('http')) return;
+        const linkAnnotation = pdfDoc.context.obj({
+            Type: 'Annot',
+            Subtype: 'Link',
+            Rect: [x, y, x + width, y + height],
+            Border: [0, 0, 0],
+            C: [0, 0, 0],
+            A: {
+                Type: 'Action',
+                S: 'URI',
+                URI: PDFString.of(String(linkUrl).trim()),
+            },
+        });
+        const linkAnnotationRef = pdfDoc.context.register(linkAnnotation);
+        
+        let annots = page.node.Annots();
+        if (!annots) {
+            annots = pdfDoc.context.obj([]);
+            page.node.set(PDFName.of('Annots'), annots);
+        }
+        annots.push(linkAnnotationRef);
+    } catch (e) {
+        console.warn("[PDF]: No se pudo agregar anotación de link:", e.message);
+    }
+};
 
 export async function generateBomFabricacionPdf({ orden, modulos }) {
     const pdfDoc = await PDFDocument.create();
@@ -205,18 +231,22 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
             page.drawText(catTxt.slice(0, 52), { x: 190, y: y - 10, size: 6.5, font: fontRegular, color: rgb(0.68, 0.82, 1) });
         }
 
-        // Botón Ver en Monday
+        // Botón Ver en Monday con Enlace Clickable Interactivo
         if (mod.linkUrl) {
-            const btnW = 75;
+            const btnW = 80;
             const btnX = width - 35 - btnW;
+            const btnY = y - 12.5;
             page.drawRectangle({
                 x: btnX,
-                y: y - 12.5,
+                y: btnY,
                 width: btnW,
                 height: 11,
                 color: royalBlue
             });
-            page.drawText("Ver en Monday", { x: btnX + 10, y: y - 9.5, size: 6, font: fontBold, color: white });
+            page.drawText("Ver en Monday ->", { x: btnX + 7, y: y - 9.5, size: 6, font: fontBold, color: white });
+
+            // Registrar hipervínculo interactivo clickable en el PDF
+            addLinkToPage(page, pdfDoc, mod.linkUrl, btnX, btnY, btnW, 11);
         }
 
         y -= 14;
