@@ -53,16 +53,16 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
     let y = height - 28;
 
     // Colores corporativos Transtools
-    const navyBlue = rgb(11 / 255, 32 / 255, 70 / 255);       // #0B2046
-    const royalBlue = rgb(37 / 255, 99 / 255, 235 / 255);     // #2563EB
-    const darkGray = rgb(30 / 255, 41 / 255, 59 / 255);       // #1E293B
-    const mediumGray = rgb(100 / 255, 116 / 255, 139 / 255);  // #64748B
-    const bgCard = rgb(248 / 255, 250 / 255, 252 / 255);      // #F8FAFC
-    const borderGray = rgb(203 / 255, 213 / 255, 225 / 255);  // #CBD5E1
+    const primaryBlue = rgb(13 / 255, 114 / 255, 183 / 255);    // #0D72B7 Oficial
+    const buttonBlue = rgb(8 / 255, 75 / 255, 122 / 255);        // Azul oscuro para botón interactivo
+    const darkGray = rgb(30 / 255, 41 / 255, 59 / 255);         // #1E293B
+    const mediumGray = rgb(100 / 255, 116 / 255, 139 / 255);    // #64748B
+    const bgCard = rgb(248 / 255, 250 / 255, 252 / 255);        // #F8FAFC
+    const borderGray = rgb(203 / 255, 213 / 255, 225 / 255);    // #CBD5E1
     const white = rgb(1, 1, 1);
-    const amberBg = rgb(254 / 255, 243 / 255, 199 / 255);     // #FEF3C7
-    const amberBorder = rgb(245 / 255, 158 / 255, 11 / 255);  // #F59E0B
-    const amberText = rgb(180 / 255, 83 / 255, 9 / 255);      // #B45309
+    const amberBg = rgb(254 / 255, 243 / 255, 199 / 255);       // #FEF3C7
+    const amberBorder = rgb(245 / 255, 158 / 255, 11 / 255);    // #F59E0B
+    const amberText = rgb(180 / 255, 83 / 255, 9 / 255);        // #B45309
 
     const safeText = (txt) => {
         if (!txt) return "";
@@ -85,9 +85,9 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
     // 1. ENCABEZADO
     const headerHeight = 36;
     if (logoImage) {
-        // Escalar de forma estricta para que el logo mida máx 115 x 34 px
-        const maxW = 115;
-        const maxH = 32;
+        // Escalar de forma estricta para que el logo mida máx 125 x 34 px
+        const maxW = 125;
+        const maxH = 34;
         const scale = Math.min(maxW / logoImage.width, maxH / logoImage.height);
         const logoW = logoImage.width * scale;
         const logoH = logoImage.height * scale;
@@ -97,13 +97,11 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
             width: logoW,
             height: logoH
         });
-    } else {
-        page.drawText("TRANSTOOLS", { x: 30, y: y - 18, size: 15, font: fontBold, color: navyBlue });
     }
 
-    // Título Central
-    page.drawText("TRANSTOOLS REMOLQUES", { x: 175, y: y - 12, size: 13, font: fontBold, color: navyBlue });
-    page.drawText("BOM DE FABRICACION Y SUBENSAMBLES", { x: 175, y: y - 24, size: 8, font: fontBold, color: mediumGray });
+    // Título del Documento (sin repetir Transtools Remolques porque ya está en el logo)
+    page.drawText("BOM DE FABRICACION", { x: 180, y: y - 13, size: 14, font: fontBold, color: primaryBlue });
+    page.drawText("ESPECIFICACION TECNICA Y SUBENSAMBLES", { x: 180, y: y - 24, size: 7.5, font: fontBold, color: mediumGray });
 
     // Folio Box en la esquina superior derecha
     const folioBoxW = 125;
@@ -113,7 +111,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
         y: y - 28,
         width: folioBoxW,
         height: 28,
-        color: navyBlue
+        color: primaryBlue
     });
     page.drawText("ORDEN DE FABRICACION", { x: folioBoxX + 10, y: y - 10, size: 6.5, font: fontBold, color: rgb(0.7, 0.8, 0.95) });
 
@@ -128,7 +126,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
 
     y -= (headerHeight + 6);
     // Línea divisoria
-    page.drawLine({ start: { x: 30, y }, end: { x: width - 30, y }, thickness: 1.5, color: navyBlue });
+    page.drawLine({ start: { x: 30, y }, end: { x: width - 30, y }, thickness: 1.5, color: primaryBlue });
     y -= 8;
 
     // 2. FICHA TÉCNICA
@@ -152,7 +150,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
     let rowY = y - 11;
     // Fila 1: Nombre de la Orden (Primer elemento)
     page.drawText("ORDEN:", { x: 38, y: rowY, size: 6.5, font: fontBold, color: mediumGray });
-    page.drawText(safeText(orden.nombre || orden.folio || "").slice(0, 85), { x: 38 + 68, y: rowY, size: 7.5, font: fontBold, color: navyBlue });
+    page.drawText(safeText(orden.nombre || orden.folio || "").slice(0, 85), { x: 38 + 68, y: rowY, size: 7.5, font: fontBold, color: primaryBlue });
 
     rowY -= 10;
     drawInfo("CLIENTE:", orden.cliente, 38, rowY, 35);
@@ -218,7 +216,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
             y: y - 14,
             width: width - 60,
             height: 14,
-            color: navyBlue
+            color: primaryBlue
         });
 
         // Título del Módulo
@@ -241,7 +239,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
                 y: btnY,
                 width: btnW,
                 height: 11,
-                color: royalBlue
+                color: buttonBlue
             });
             page.drawText("Ver en Monday ->", { x: btnX + 7, y: y - 9.5, size: 6, font: fontBold, color: white });
 
@@ -304,7 +302,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
                 }
 
                 page.drawText(nombreLimpio.slice(0, 95), { x: 60, y: y - 8, size: 6.5, font: fontRegular, color: darkGray });
-                page.drawText(`${sub.cantidad || 1} ${sub.unidad || 'PZA'}`, { x: 485, y: y - 8, size: 6.5, font: fontBold, color: navyBlue });
+                page.drawText(`${sub.cantidad || 1} ${sub.unidad || 'PZA'}`, { x: 485, y: y - 8, size: 6.5, font: fontBold, color: primaryBlue });
 
                 y -= 11;
             }
@@ -318,7 +316,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
             });
             page.drawText("1", { x: 38, y: y - 8, size: 6.5, font: fontBold, color: mediumGray });
             page.drawText("Componente directo / Sin subensambles secundarios registrados.", { x: 60, y: y - 8, size: 6, font: fontRegular, color: mediumGray });
-            page.drawText("1 PZA", { x: 485, y: y - 8, size: 6.5, font: fontBold, color: navyBlue });
+            page.drawText("1 PZA", { x: 485, y: y - 8, size: 6.5, font: fontBold, color: primaryBlue });
             y -= 11;
         }
 
@@ -332,7 +330,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
 
     const drawSignature = (title, sub, xPos) => {
         page.drawLine({ start: { x: xPos, y }, end: { x: xPos + signColWidth - 20, y }, thickness: 0.8, color: mediumGray });
-        page.drawText(title, { x: xPos + 6, y: y - 9, size: 6.5, font: fontBold, color: navyBlue });
+        page.drawText(title, { x: xPos + 6, y: y - 9, size: 6.5, font: fontBold, color: primaryBlue });
         page.drawText(sub, { x: xPos + 6, y: y - 16, size: 5, font: fontRegular, color: mediumGray });
     };
 
