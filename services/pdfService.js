@@ -223,10 +223,12 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
         const modTitle = `${numPartida}. ${safeText(mod.nombreItem)}`;
         page.drawText(modTitle.slice(0, 35), { x: 36, y: y - 10, size: 7.5, font: fontBold, color: white });
 
-        if (mod.moduloNombre) {
+        if (mod.moduloNombre && mod.moduloNombre.trim() !== '') {
             const codTxt = mod.codigoModulo ? `${mod.codigoModulo} : ` : "";
             const catTxt = `[${codTxt}${safeText(mod.moduloNombre)}]`;
             page.drawText(catTxt.slice(0, 52), { x: 190, y: y - 10, size: 6.5, font: fontRegular, color: rgb(0.68, 0.82, 1) });
+        } else {
+            page.drawText("[SIN MODULO AGREGADO]", { x: 190, y: y - 10, size: 6.5, font: fontBold, color: rgb(1, 0.85, 0.6) });
         }
 
         // Botón Ver en Monday con Enlace Clickable Interactivo
@@ -307,16 +309,25 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
                 y -= 11;
             }
         } else {
-            // Componente directo
+            // Sin submódulos o sin módulo asignado
+            const tieneMod = Boolean(mod.moduloNombre && mod.moduloNombre.trim() !== '');
             page.drawLine({
                 start: { x: 30, y: y - 11 },
                 end: { x: width - 30, y: y - 11 },
                 thickness: 0.4,
                 color: borderGray
             });
-            page.drawText("1", { x: 38, y: y - 8, size: 6.5, font: fontBold, color: mediumGray });
-            page.drawText("Componente directo / Sin subensambles secundarios registrados.", { x: 60, y: y - 8, size: 6, font: fontRegular, color: mediumGray });
-            page.drawText("1 PZA", { x: 485, y: y - 8, size: 6.5, font: fontBold, color: primaryBlue });
+
+            page.drawText("-", { x: 38, y: y - 8, size: 6.5, font: fontBold, color: mediumGray });
+
+            const textoFila = tieneMod
+                ? "Subensamble directo / Sin componentes secundarios."
+                : "SIN MODULO AGREGADO, FAVOR DE REVISAR";
+
+            const colorFila = tieneMod ? mediumGray : amberText;
+
+            page.drawText(textoFila, { x: 60, y: y - 8, size: 6.5, font: fontBold, color: colorFila });
+            page.drawText(tieneMod ? "1 PZA" : "-", { x: 485, y: y - 8, size: 6.5, font: fontBold, color: tieneMod ? primaryBlue : mediumGray });
             y -= 11;
         }
 
