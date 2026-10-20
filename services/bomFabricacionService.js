@@ -60,16 +60,29 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
     const boardCols = orderItem.board?.columns || [];
 
     const getVal = (colIdOrTitle) => {
-        const found = orderCols.find(c => c.id === colIdOrTitle || normalizeStr(c.text || "").includes(normalizeStr(colIdOrTitle)));
-        return extractColText(found);
+        // 1. Buscar directamente por ID
+        let col = orderCols.find(c => c.id === colIdOrTitle);
+        if (!col) {
+            // 2. Buscar por título exacto en las columnas del tablero
+            const targetNorm = normalizeStr(colIdOrTitle);
+            const boardCol = boardCols.find(b => {
+                const titleNorm = normalizeStr(b.title || "");
+                return titleNorm === targetNorm || titleNorm.includes(targetNorm);
+            });
+            if (boardCol) {
+                col = orderCols.find(c => c.id === boardCol.id);
+            }
+        }
+        return extractColText(col);
     };
 
-    // Datos principales de la OF
-    const folio = getVal("text_mm86c6s1") || getVal("ID ORDEN") || orderItem.name;
+    // Datos principales de la OF extraídos con los IDs exactos
+    const nombreOrden = orderItem.name || "";
+    const folio = getVal("ID ORDEN") || getVal("text_mm86c6s1") || (orderItem.name.match(/OF[0-9A-Za-z_-]+/i)?.[0]) || "OF-TRANSTOOLS";
     const codigoProducto = getVal("text_mm86hsh9") || getVal("CODIGO DE PRODUCTO");
     const codigoConfig = getVal("text_mm864yeg") || getVal("CODIGO DE CONFIGURACION");
-    const catalogoConfig = getVal("board_relation_mm86d06q") || getVal("CATALOGO DE PRODUCTOS");
-    const cliente = getVal("board_relation_mm864h7h") || getVal("CLIENTES");
+    const catalogoConfig = getVal("board_relation_mm7xwz6z") || getVal("board_relation_mm86d06q") || getVal("CATALOGO DE PRODUCTOS");
+    const cliente = getVal("board_relation_mm7xyyeq") || getVal("board_relation_mm864h7h") || getVal("CLIENTES");
     const grabado = getVal("text_mm866382") || getVal("GRABADO");
     const color = getVal("text_mm86dsk7") || getVal("CODIGO DE COLOR") || "BLANCO";
     const largo = getVal("text_mm86pff2") || getVal("LARGO");
@@ -184,14 +197,17 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
                     const idNorm = normalizeStr(c.id || "");
                     return idNorm.includes("submodulo") || c.type === "board_relation" || c.type === "text";
                 });
-                const submoduloNombre = extractColText(colSubmodulo) || s.name;
+                let submoduloNombre = extractColText(colSubmodulo);
+                if (!submoduloNombre || submoduloNombre.trim() === '') {
+                    submoduloNombre = s.name;
+                }
                 const cant = extractColNumber(sc.find(c => c.type === "numbers"), 1);
                 const unidad = extractColText(sc.find(c => normalizeStr(c.id || "").includes("unidad") || c.type === "dropdown")) || "PZA";
 
                 mod.submodulos.push({
                     id: s.id,
-                    indice: s.name,               // "1", "2", "3", etc.
-                    nombre: submoduloNombre,      // "SUBENSAMBLE ESTRUCTURA GENERAL CHASIS PL40FT..."
+                    indice: !isNaN(Number(s.name)) ? s.name : "",
+                    nombre: submoduloNombre,
                     cantidad: cant,
                     unidad
                 });
