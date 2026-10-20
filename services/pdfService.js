@@ -264,8 +264,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
 
         page.drawText("#", { x: 38, y: y - 8, size: 6, font: fontBold, color: mediumGray });
         page.drawText("SUBENSAMBLE / SUBMODULO", { x: 60, y: y - 8, size: 6, font: fontBold, color: mediumGray });
-        page.drawText("CANTIDAD", { x: 440, y: y - 8, size: 6, font: fontBold, color: mediumGray });
-        page.drawText("ENSAMBLE", { x: 510, y: y - 8, size: 6, font: fontBold, color: mediumGray });
+        page.drawText("CANTIDAD", { x: 485, y: y - 8, size: 6, font: fontBold, color: mediumGray });
 
         y -= 10.5;
 
@@ -299,24 +298,13 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
 
                 // Nombre limpio sin duplicar
                 let nombreLimpio = safeText(sub.nombre || "");
-                // Si viene duplicado "TEXTO TEXTO", quedarse con una sola vez
                 const mitad = Math.floor(nombreLimpio.length / 2);
                 if (mitad > 10 && nombreLimpio.slice(0, mitad).trim() === nombreLimpio.slice(mitad).trim()) {
                     nombreLimpio = nombreLimpio.slice(0, mitad).trim();
                 }
 
-                page.drawText(nombreLimpio.slice(0, 78), { x: 60, y: y - 8, size: 6.5, font: fontRegular, color: darkGray });
-                page.drawText(`${sub.cantidad || 1} ${sub.unidad || 'PZA'}`, { x: 440, y: y - 8, size: 6.5, font: fontBold, color: navyBlue });
-
-                // Casilla cuadrada de ensamble [ ]
-                page.drawRectangle({
-                    x: 522,
-                    y: y - 9.5,
-                    width: 8,
-                    height: 8,
-                    borderColor: mediumGray,
-                    borderWidth: 0.6
-                });
+                page.drawText(nombreLimpio.slice(0, 95), { x: 60, y: y - 8, size: 6.5, font: fontRegular, color: darkGray });
+                page.drawText(`${sub.cantidad || 1} ${sub.unidad || 'PZA'}`, { x: 485, y: y - 8, size: 6.5, font: fontBold, color: navyBlue });
 
                 y -= 11;
             }
@@ -330,15 +318,7 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
             });
             page.drawText("1", { x: 38, y: y - 8, size: 6.5, font: fontBold, color: mediumGray });
             page.drawText("Componente directo / Sin subensambles secundarios registrados.", { x: 60, y: y - 8, size: 6, font: fontRegular, color: mediumGray });
-            page.drawText("1 PZA", { x: 440, y: y - 8, size: 6.5, font: fontBold, color: navyBlue });
-            page.drawRectangle({
-                x: 522,
-                y: y - 9.5,
-                width: 8,
-                height: 8,
-                borderColor: mediumGray,
-                borderWidth: 0.6
-            });
+            page.drawText("1 PZA", { x: 485, y: y - 8, size: 6.5, font: fontBold, color: navyBlue });
             y -= 11;
         }
 
