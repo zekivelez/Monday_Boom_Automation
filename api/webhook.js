@@ -317,10 +317,18 @@ export default async function handler(req, res) {
         // =========================================================================
         // PASO 8.5: Pegar enlace de Solicitudes de Compra en columna link_mm8b30hj
         // =========================================================================
+        let mondayDomain = "transtools-team.monday.com";
+        try {
+            const accRes = await fetchMonday(`query { account { slug } }`);
+            if (accRes.data?.account?.slug) {
+                mondayDomain = `${accRes.data.account.slug}.monday.com`;
+            }
+        } catch {}
+
         const firstPulseId = comprasSyncResult?.itemsIds?.[0];
         const solicitudesUrl = firstPulseId 
-            ? `https://transtools.monday.com/boards/18434424067/pulses/${firstPulseId}`
-            : `https://transtools.monday.com/boards/18434424067`;
+            ? `https://${mondayDomain}/boards/18434424067/pulses/${firstPulseId}`
+            : `https://${mondayDomain}/boards/18434424067`;
         const linkLabel = `Solicitudes de Compra (${comprasSyncResult?.totalCreados || 0})`;
 
         console.log(`[Paso 8.5]: Pegando enlace en columna ${COLUMN_LINK_COMPRAS} -> ${solicitudesUrl}...`);
