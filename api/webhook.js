@@ -21,25 +21,47 @@ const CONFIG_ALIASES = {
     "DOLLY A": "DOTA-10M-2FMX-1-00101"
 };
 
-export default async function handler(req, res) {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+// Columnas oficiales en Monday para la Lista de Compras
+export const COLUMN_STATUS_COMPRAS = "color_mm8bdx4x";
+export const COLUMN_FILE_COMPRAS = "file_mm8bcx7";
+export const COLUMN_LINK_COMPRAS = "link_mm8b30hj";
 
+export default async function handler(req, res) {
     // 1. Verificación de handshake de Monday (Challenge)
-    if (req.body && req.body.challenge) {
+    if (req.body?.challenge) {
         return res.status(200).json({ challenge: req.body.challenge });
+    }
+    if (req.query?.challenge) {
+        return res.status(200).json({ challenge: req.query.challenge });
+    }
+
+    if (req.method === 'GET') {
+        return res.status(200).json({ status: 'ok', service: 'Lista de Compras Transtools' });
+    }
+
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
     }
 
     const { event } = req.body || {};
-    if (!event) {
-        return res.status(200).json({ message: 'Sin evento en el body' });
-    }
-
-    const pulseId = event.pulseId || event.itemId;
-    console.log(`[Webhook Evento Recibido]: tipo="${event.type}", pulseId="${pulseId}"`);
+    const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
+    console.log(`[Webhook Compras]: Evento recibido, pulseId="${pulseId}", tipo="${event?.type}"`);
 
     if (!pulseId) {
-        console.warn("Evento recibido sin pulseId:", JSON.stringify(event));
+        console.warn("[Webhook Compras]: Evento recibido sin pulseId:", JSON.stringify(req.body));
         return res.status(200).json({ message: 'Ignorado: sin pulseId' });
+    }
+
+    // 2. Verificación si el webhook fue detonado por cambio de estado a "Generar lista"
+    const statusLabel = event?.value?.label?.text || event?.label?.text || event?.value?.label?.name || "";
+    if (statusLabel) {
+        const normStatus = normalizeStr(statusLabel);
+        // Si el estado no corresponde a "generar lista" o "generar", evitamos re-ejecución
+        if (!normStatus.includes("generar lista") && !normStatus.includes("generar")) {
+            console.log(`[Webhook Compras]: Cambio de estado a "${statusLabel}" ignorado (no es 'Generar lista').`);
+            return res.status(200).json({ message: `Ignorado: estado "${statusLabel}" no es 'Generar lista'` });
+        }
+        console.log(`[Webhook Compras]: Estado detonador detectado: "${statusLabel}"`);
     }
 
     const token = process.env.MONDAY_API_KEY;
@@ -69,32 +91,67 @@ export default async function handler(req, res) {
                 value: JSON.stringify({ label })
             });
             if (r.errors) {
-                console.warn(`[STATUS]: Advertencia al actualizar estado a "${label}":`, JSON.stringify(r.errors));
+                console.warn(`[STATUS]: Advertencia al actualizar columna ${columnId} a "${label}":`, JSON.stringify(r.errors));
             } else {
                 console.log(`[STATUS]: Columna ${columnId} actualizada con éxito a "${label}".`);
             }
         } catch (e) {
-            console.warn(`[STATUS]: No se pudo actualizar estado a "${label}":`, e.message);
+            console.warn(`[STATUS]: No se pudo actualizar columna ${columnId} a "${label}":`, e.message);
+        }
+    };
+
+    const updateLinkColumn = async (boardId, itemId, columnId, url, text) => {
+        try {
+            const mutation = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
+                change_column_value (
+                    board_id: $boardId,
+                    item_id: $itemId,
+                    column_id: $columnId,
+                    value: $value
+                ) {
+                    id
+                }
+            }`;
+            const r = await fetchMonday(mutation, {
+                boardId,
+                itemId,
+                columnId,
+                value: JSON.stringify({ url, text })
+            });
+            if (r.errors) {
+                console.warn(`[LINK]: Advertencia al actualizar columna link ${columnId}:`, JSON.stringify(r.errors));
+            } else {
+                console.log(`[LINK]: Columna ${columnId} actualizada con éxito -> "${url}" (${text}).`);
+            }
+        } catch (e) {
+            console.warn(`[LINK]: No se pudo actualizar columna de link ${columnId}:`, e.message);
         }
     };
 
     let currentBoardId = "18433030481";
+    let targetStatusColId = event?.columnId || null;
 
     try {
         // =========================================================================
-        // PASO 1: Leer la orden detonadora en PRUEBA API (18433030481)
+        // PASO 1: Leer el ítem detonador en Monday
         // =========================================================================
-        console.log(`[Paso 1]: Consultando PRUEBA API para el ítem ${pulseId}...`);
+        console.log(`[Paso 1]: Consultando ítem ${pulseId}...`);
         const queryGenerador = `query ($itemId: [ID!]) {
             items (ids: $itemId) {
                 id
                 name
-                board { id }
+                board {
+                    id
+                    name
+                    columns { id title type }
+                }
                 column_values {
                     id
                     text
                     value
                     type
+                    ... on MirrorValue { display_value }
+                    ... on BoardRelationValue { display_value linked_item_ids linked_items { id name } }
                 }
             }
         }`;
@@ -102,18 +159,43 @@ export default async function handler(req, res) {
         const resGenerador = await fetchMonday(queryGenerador, { itemId: [pulseId] });
         const generadorItem = resGenerador.data?.items?.[0];
         if (!generadorItem) {
-            throw new Error(`No se encontró el ítem con id ${pulseId} en PRUEBA API`);
+            throw new Error(`No se encontró el ítem con id ${pulseId} en Monday`);
         }
         if (generadorItem.board?.id) {
             currentBoardId = String(generadorItem.board.id);
         }
 
-        const orderName = generadorItem.name || `Orden #${pulseId}`;
+        const boardCols = generadorItem.board?.columns || [];
         const genCols = generadorItem.column_values || [];
-        const colCantidad = genCols.find(c => c.id === "numeric_mm7m4t8r");
-        const colProducto = genCols.find(c => c.id === "dropdown_mm7mhnmc");
-        const colConfigDropdown = genCols.find(c => c.id === "dropdown_mm7mqdtg");
-        const colConfigText = genCols.find(c => c.id === "text_mm7q5s7x");
+
+        // Helper para ubicar columnas por ID o por coincidencia de título
+        const findCol = (idPattern, titlePattern) => {
+            let c = genCols.find(col => col.id === idPattern);
+            if (c) return c;
+            if (titlePattern) {
+                const bCol = boardCols.find(b => {
+                    const t = normalizeStr(b.title || "");
+                    return t.includes(normalizeStr(titlePattern));
+                });
+                if (bCol) return genCols.find(col => col.id === bCol.id);
+            }
+            return null;
+        };
+
+        // Identificar columna de estado: prioridad a event.columnId o a la columna oficial COLUMN_STATUS_COMPRAS (color_mm8bdx4x)
+        if (!targetStatusColId) {
+            targetStatusColId = COLUMN_STATUS_COMPRAS;
+        }
+
+        // Marcar en proceso "Trabajando en ello" / "Generando..."
+        await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Trabajando en ello");
+
+        // Datos de la orden
+        const orderName = generadorItem.name || `Orden #${pulseId}`;
+        const colCantidad = findCol("numeric_mm7m4t8r", "cantidad") || findCol("numeric_mm86z5h6", "cantidad");
+        const colProducto = findCol("dropdown_mm7mhnmc", "producto") || findCol("text_mm86hsh9", "codigo de producto");
+        const colConfigDropdown = findCol("dropdown_mm7mqdtg", "configuracion") || findCol("text_mm864yeg", "codigo de configuracion");
+        const colConfigText = findCol("text_mm7q5s7x", "codigo de configuracion") || findCol("text_mm864yeg", "configuracion");
 
         const productoSeleccionado = extractColText(colProducto);
         const configuracionDropdown = extractColText(colConfigDropdown);
@@ -122,7 +204,7 @@ export default async function handler(req, res) {
         let cantidadEquipos = extractColNumber(colCantidad, 1);
         if (cantidadEquipos <= 0) cantidadEquipos = 1;
 
-        // Determinar el código técnico de configuración (ej: DOTA-10M-2FMX-1-00101)
+        // Determinar código técnico de configuración (ej: DOTA-10M-2FMX-1-00101)
         let configCodigoTecnico = configuracionTexto || "";
         if (!configCodigoTecnico && configuracionDropdown) {
             configCodigoTecnico = CONFIG_ALIASES[configuracionDropdown.trim()] || "";
@@ -145,11 +227,12 @@ export default async function handler(req, res) {
 
         const configNombreVisible = configuracionDropdown || configCodigoTecnico;
 
-        console.log(`[PRUEBA API]: Orden="${orderName}", Producto="${productoSeleccionado}", ConfigNombre="${configNombreVisible}", ClaveTecnica="${configCodigoTecnico}", Cantidad=${cantidadEquipos}`);
+        console.log(`[Compras]: Orden="${orderName}", Producto="${productoSeleccionado}", ConfigNombre="${configNombreVisible}", ClaveTecnica="${configCodigoTecnico}", Cantidad=${cantidadEquipos}`);
 
         // =========================================================================
         // PASO 2 a 6: Explosión multinivel y consolidación de materiales
         // =========================================================================
+        console.log("[Paso 2]: Iniciando explosión de materiales...");
         const { desgloses, consolidado } = await explodeBom({
             fetchMonday,
             configCodigoTecnico,
@@ -171,11 +254,14 @@ export default async function handler(req, res) {
             consolidado
         });
 
-        console.log(`[PDF]: Generado (${pdfBytes.length} bytes). Subiendo a PRUEBA API (file_mm7m2b35)...`);
+        // Columna fija y oficial para el archivo PDF de Compras (file_mm8bcx7)
+        const fileColId = COLUMN_FILE_COMPRAS;
+
+        console.log(`[PDF Compras]: Generado (${pdfBytes.length} bytes). Subiendo a columna ${fileColId}...`);
         const safeOrderFile = orderName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const uploadRes = await uploadPdfToMonday(pulseId, token, pdfBytes, `LISTA_COMPRAS_${safeOrderFile}.pdf`);
+        const uploadRes = await uploadPdfToMonday(pulseId, token, pdfBytes, `LISTA_COMPRAS_${safeOrderFile}.pdf`, fileColId);
         const pdfSubido = Boolean(uploadRes && !uploadRes.errors);
-        console.log(`[PDF]: Resultado de subida: ${pdfSubido ? 'EXITOSO' : 'FALLIDO'}`);
+        console.log(`[PDF Compras]: Resultado de subida: ${pdfSubido ? 'EXITOSO' : 'FALLIDO'}`);
 
         // =========================================================================
         // PASO 8: Sincronizar partidas en el tablero SOLICITUDES DE COMPRA (18434424067)
@@ -191,10 +277,22 @@ export default async function handler(req, res) {
         });
 
         // =========================================================================
+        // PASO 8.5: Pegar enlace de Solicitudes de Compra en columna link_mm8b30hj
+        // =========================================================================
+        const firstPulseId = comprasSyncResult?.itemsIds?.[0];
+        const solicitudesUrl = firstPulseId 
+            ? `https://transtools.monday.com/boards/18434424067/pulses/${firstPulseId}`
+            : `https://transtools.monday.com/boards/18434424067`;
+        const linkLabel = `Solicitudes de Compra (${comprasSyncResult?.totalCreados || 0})`;
+
+        console.log(`[Paso 8.5]: Pegando enlace en columna ${COLUMN_LINK_COMPRAS} -> ${solicitudesUrl}...`);
+        await updateLinkColumn(currentBoardId, pulseId, COLUMN_LINK_COMPRAS, solicitudesUrl, linkLabel);
+
+        // =========================================================================
         // PASO 9: Actualizar el estado en el tablero detonador a "Generado"
         // =========================================================================
-        console.log(`[Paso 9]: Actualizando columna color_mm7z8wrp a 'Generado'...`);
-        await updateStatusColumn(currentBoardId, pulseId, "color_mm7z8wrp", "Generado");
+        console.log(`[Paso 9]: Actualizando columna ${targetStatusColId} a 'Generado'...`);
+        await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Generado");
 
         return res.status(200).json({
             success: true,
@@ -210,9 +308,11 @@ export default async function handler(req, res) {
         });
 
     } catch (error) {
-        console.error("---> Error crítico en handler:", error);
+        console.error("---> [Error Crítico Compras]:", error);
         try {
-            await updateStatusColumn(currentBoardId, pulseId, "color_mm7z8wrp", "Error");
+            if (targetStatusColId) {
+                await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Error");
+            }
         } catch {}
         return res.status(500).json({ error: error.message });
     }

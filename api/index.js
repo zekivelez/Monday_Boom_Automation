@@ -1,7 +1,12 @@
 // api/index.js
-// Handler para la raíz del proyecto en Vercel (https://monday-boom-automation.vercel.app/)
-// Reenvía directamente a generar-bom
-
-import handler from './generar-bom.js';
-
-export default handler;
+// Handler para la raíz del proyecto en Vercel
+export default function handler(req, res) {
+    return res.status(200).json({
+        service: "Transtools Monday Automation",
+        status: "online",
+        endpoints: {
+            compras: "/api/webhook o /api/generar-compras",
+            bomFabricacion: "/api/generar-bom"
+        }
+    });
+}
