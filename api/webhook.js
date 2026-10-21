@@ -21,17 +21,24 @@ const CONFIG_ALIASES = {
     "DOLLY A": "DOTA-10M-2FMX-1-00101"
 };
 
-// Columnas oficiales en Monday para la Lista de Compras
+// Tablero oficial detonador: ÓRDENES DE FABRICACIÓN
+export const BOARD_ORDENES_FABRICACION = "18434500734";
+
+// Columnas oficiales en el tablero de Órdenes de Fabricación (18434500734) para Lista de Compras
 export const COLUMN_STATUS_COMPRAS = "color_mm8bdx4x";
 export const COLUMN_FILE_COMPRAS = "file_mm8bcx7";
 export const COLUMN_LINK_COMPRAS = "link_mm8b30hj";
 
 export default async function handler(req, res) {
+    console.log("--> [WEBHOOK COMPRAS ENTRADA]:", req.method, JSON.stringify({ body: req.body, query: req.query }));
+
     // 1. Verificación de handshake de Monday (Challenge)
     if (req.body?.challenge) {
+        console.log("[Webhook Compras]: Respondiendo challenge:", req.body.challenge);
         return res.status(200).json({ challenge: req.body.challenge });
     }
     if (req.query?.challenge) {
+        console.log("[Webhook Compras]: Respondiendo challenge en query:", req.query.challenge);
         return res.status(200).json({ challenge: req.query.challenge });
     }
 
@@ -45,23 +52,27 @@ export default async function handler(req, res) {
 
     const { event } = req.body || {};
     const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
-    console.log(`[Webhook Compras]: Evento recibido, pulseId="${pulseId}", tipo="${event?.type}"`);
 
     if (!pulseId) {
         console.warn("[Webhook Compras]: Evento recibido sin pulseId:", JSON.stringify(req.body));
         return res.status(200).json({ message: 'Ignorado: sin pulseId' });
     }
 
-    // 2. Verificación si el webhook fue detonado por cambio de estado a "Generar lista"
-    const statusLabel = event?.value?.label?.text || event?.label?.text || event?.value?.label?.name || "";
+    // 2. Parseo seguro de event.value (puede venir como objeto o como string JSON)
+    let valObj = event?.value;
+    if (typeof valObj === 'string') {
+        try { valObj = JSON.parse(valObj); } catch {}
+    }
+    const statusLabel = valObj?.label?.text || valObj?.label?.name || event?.label?.text || "";
+    console.log(`[Webhook Compras]: pulseId=${pulseId}, columnId=${event?.columnId}, statusLabel="${statusLabel}"`);
+
     if (statusLabel) {
         const normStatus = normalizeStr(statusLabel);
         // Si el estado no corresponde a "generar lista" o "generar", evitamos re-ejecución
-        if (!normStatus.includes("generar lista") && !normStatus.includes("generar")) {
+        if (!normStatus.includes("generar lista") && !normStatus.includes("generar") && !normStatus.includes("lista")) {
             console.log(`[Webhook Compras]: Cambio de estado a "${statusLabel}" ignorado (no es 'Generar lista').`);
-            return res.status(200).json({ message: `Ignorado: estado "${statusLabel}" no es 'Generar lista'` });
+            return res.status(200).json({ message: `Ignorado: estado "${statusLabel}"` });
         }
-        console.log(`[Webhook Compras]: Estado detonador detectado: "${statusLabel}"`);
     }
 
     const token = process.env.MONDAY_API_KEY;
@@ -128,14 +139,14 @@ export default async function handler(req, res) {
         }
     };
 
-    let currentBoardId = "18433030481";
+    let currentBoardId = event?.boardId ? String(event.boardId) : BOARD_ORDENES_FABRICACION;
     let targetStatusColId = event?.columnId || null;
 
     try {
         // =========================================================================
-        // PASO 1: Leer el ítem detonador en Monday
+        // PASO 1: Leer la Orden de Fabricación en Monday (Tablero 18434500734)
         // =========================================================================
-        console.log(`[Paso 1]: Consultando ítem ${pulseId}...`);
+        console.log(`[Paso 1]: Consultando ítem ${pulseId} en tablero ${currentBoardId}...`);
         const queryGenerador = `query ($itemId: [ID!]) {
             items (ids: $itemId) {
                 id
@@ -190,12 +201,13 @@ export default async function handler(req, res) {
         // Marcar en proceso "Trabajando en ello" / "Generando..."
         await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Trabajando en ello");
 
-        // Datos de la orden
-        const orderName = generadorItem.name || `Orden #${pulseId}`;
-        const colCantidad = findCol("numeric_mm7m4t8r", "cantidad") || findCol("numeric_mm86z5h6", "cantidad");
-        const colProducto = findCol("dropdown_mm7mhnmc", "producto") || findCol("text_mm86hsh9", "codigo de producto");
-        const colConfigDropdown = findCol("dropdown_mm7mqdtg", "configuracion") || findCol("text_mm864yeg", "codigo de configuracion");
-        const colConfigText = findCol("text_mm7q5s7x", "codigo de configuracion") || findCol("text_mm864yeg", "configuracion");
+        // Datos de la orden (priorizando columnas del tablero 18434500734)
+        const orderFolio = findCol("text_mm86c6s1", "id orden")?.text || (generadorItem.name.match(/OF[0-9A-Za-z_-]+/i)?.[0]);
+        const orderName = orderFolio || generadorItem.name || `Orden #${pulseId}`;
+        const colCantidad = findCol("numeric_mm86z5h6", "cantidad") || findCol("numeric_mm7m4t8r", "cantidad");
+        const colProducto = findCol("text_mm86hsh9", "codigo de producto") || findCol("dropdown_mm7mhnmc", "producto");
+        const colConfigText = findCol("text_mm864yeg", "codigo de configuracion") || findCol("text_mm7q5s7x", "codigo de configuracion");
+        const colConfigDropdown = findCol("board_relation_mm86d06q", "catalogo de productos") || findCol("board_relation_mm7xwz6z", "configuracion") || findCol("dropdown_mm7mqdtg", "configuracion");
 
         const productoSeleccionado = extractColText(colProducto);
         const configuracionDropdown = extractColText(colConfigDropdown);

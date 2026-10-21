@@ -4,8 +4,11 @@
 import { createMondayClient, uploadPdfToMonday } from '../services/mondayClient.js';
 import { getOrdenFabricacionBomData, COLUMN_FILE_BOM } from '../services/bomFabricacionService.js';
 import { generateBomFabricacionPdf } from '../services/pdfService.js';
+import webhookComprasHandler from './webhook.js';
 
 export default async function handler(req, res) {
+    console.log("--> [ENDPOINT GENERAR-BOM]:", req.method, JSON.stringify({ body: req.body, query: req.query }));
+
     // 1. Verificación de Handshake de Monday (Challenge)
     if (req.body?.challenge) {
         return res.status(200).json({ challenge: req.body.challenge });
@@ -24,6 +27,12 @@ export default async function handler(req, res) {
 
     const { event } = req.body || {};
     const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
+
+    // Delegación automática: si el evento viene de la columna de Compras color_mm8bdx4x
+    if (event?.columnId === 'color_mm8bdx4x') {
+        console.log(`[Generar BOM]: Evento detectado para Compras (columna color_mm8bdx4x), delegando a webhook de compras...`);
+        return await webhookComprasHandler(req, res);
+    }
 
     console.log(`[Webhook Generar BOM]: Recibido para pulseId: ${pulseId}`);
 
