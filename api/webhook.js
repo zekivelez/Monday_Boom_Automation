@@ -68,14 +68,30 @@ export default async function handler(req, res) {
         try { valObj = JSON.parse(valObj); } catch {}
     }
     const statusLabel = valObj?.label?.text || valObj?.label?.name || event?.label?.text || "";
-    console.log(`[Webhook Compras]: pulseId=${pulseId}, columnId=${event?.columnId}, statusLabel="${statusLabel}"`);
+    const colTitle = normalizeStr(event?.columnTitle || "");
+    const normStatus = normalizeStr(statusLabel);
 
-    if (statusLabel) {
-        const normStatus = normalizeStr(statusLabel);
-        // Si el estado no corresponde a "generar lista" o "generar", evitamos re-ejecución
-        if (!normStatus.includes("generar lista") && !normStatus.includes("generar") && !normStatus.includes("lista")) {
-            console.log(`[Webhook Compras]: Cambio de estado a "${statusLabel}" ignorado (no es 'Generar lista').`);
-            return res.status(200).json({ message: `Ignorado: estado "${statusLabel}"` });
+    console.log(`[Webhook Compras]: pulseId=${pulseId}, columnId=${event?.columnId}, statusLabel="${statusLabel}", colTitle="${colTitle}"`);
+
+    // Protección estricta: Si el evento es de "GENERAR OF", ignorar inmediatamente en compras
+    if (normStatus.includes(" of") || normStatus === "generar of" || colTitle.includes(" of") || colTitle === "generar of") {
+        console.log(`[Webhook Compras]: Evento corresponde a 'GENERAR OF', ignorando en flujo de compras.`);
+        return res.status(200).json({ message: "Ignorado en Compras: evento es de GENERAR OF" });
+    }
+
+    // Si viene de un evento de webhook automático, debe coincidir estrictamente con Compras
+    if (event) {
+        const isComprasCol = event.columnId === COLUMN_STATUS_COMPRAS;
+        const isListaText = colTitle.includes("lista") || normStatus.includes("lista");
+
+        if (!isComprasCol && !isListaText) {
+            console.log(`[Webhook Compras]: Ignorado: Columna "${event.columnId}" ("${colTitle}") con estado "${statusLabel}" no pertenece a Lista de Compras.`);
+            return res.status(200).json({ message: "Ignorado: evento no pertenece a Lista de Compras" });
+        }
+
+        if (statusLabel && !normStatus.includes("lista")) {
+            console.log(`[Webhook Compras]: Estado "${statusLabel}" ignorado (no es 'Generar lista').`);
+            return res.status(200).json({ message: `Ignorado: estado "${statusLabel}" no es de lista de compras` });
         }
     }
 
