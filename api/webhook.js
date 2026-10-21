@@ -224,8 +224,7 @@ export default async function handler(req, res) {
             targetStatusColId = COLUMN_STATUS_COMPRAS;
         }
 
-        // Marcar en proceso "Trabajando en ello" / "Generando..."
-        await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Trabajando en ello");
+        // El estado se mantiene en 'GENERAR LISTA' tal como fue seleccionado
 
         // Datos de la orden (priorizando columnas del tablero 18434500734)
         const orderFolio = findCol("text_mm86c6s1", "id orden")?.text || (generadorItem.name.match(/OF[0-9A-Za-z_-]+/i)?.[0]);
@@ -328,10 +327,9 @@ export default async function handler(req, res) {
         await updateLinkColumn(currentBoardId, pulseId, COLUMN_LINK_COMPRAS, solicitudesUrl, linkLabel);
 
         // =========================================================================
-        // PASO 9: Actualizar el estado en el tablero detonador a "Generado"
+        // PASO 9: El estado permanece intacto en "GENERAR LISTA"
         // =========================================================================
-        console.log(`[Paso 9]: Actualizando columna ${targetStatusColId} a 'Generado'...`);
-        await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Generado");
+        console.log(`[Paso 9]: Proceso completado con éxito. Estado conservado en 'GENERAR LISTA'.`);
 
         return res.status(200).json({
             success: true,
@@ -348,11 +346,6 @@ export default async function handler(req, res) {
 
     } catch (error) {
         console.error("---> [Error Crítico Compras]:", error);
-        try {
-            if (targetStatusColId) {
-                await updateStatusColumn(currentBoardId, pulseId, targetStatusColId, "Error");
-            }
-        } catch {}
         return res.status(500).json({ error: error.message });
     }
 }
