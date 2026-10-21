@@ -163,7 +163,10 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
 
     rowY -= 10;
     drawInfo("NIV / SERIE:", orden.tecnico?.niv || "PENDIENTE", 38, rowY, 35);
-    drawInfo("ANO MODELO:", `${orden.tecnico?.anoModelo || '2027'} | Unidades: ${orden.cantidadUnidades || 1}`, 330, rowY, 25);
+    page.drawText("MODELO:", { x: 330, y: rowY, size: 6.5, font: fontBold, color: mediumGray });
+    page.drawText(safeText(orden.tecnico?.anoModelo || '2027'), { x: 330 + 44, y: rowY, size: 7, font: fontBold, color: darkGray });
+    page.drawText("UNIDADES:", { x: 440, y: rowY, size: 6.5, font: fontBold, color: mediumGray });
+    page.drawText(String(orden.cantidadUnidades || 1), { x: 440 + 52, y: rowY, size: 7, font: fontBold, color: primaryBlue });
 
     rowY -= 10;
     if (orden.grabado && !orden.grabado.toLowerCase().includes("1.-")) {
