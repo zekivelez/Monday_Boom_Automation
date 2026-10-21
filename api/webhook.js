@@ -42,16 +42,20 @@ export default async function handler(req, res) {
         return res.status(200).json({ challenge: req.query.challenge });
     }
 
-    if (req.method === 'GET') {
-        return res.status(200).json({ status: 'ok', service: 'Lista de Compras Transtools' });
-    }
-
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-
     const { event } = req.body || {};
     const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
+
+    if (req.method === 'GET' && !pulseId) {
+        return res.status(200).json({
+            status: 'ok',
+            service: 'Lista de Compras Transtools',
+            tip: 'Para detonar manualmente puedes pasar ?pulseId=TU_ID_DE_OF'
+        });
+    }
+
+    if (req.method !== 'POST' && req.method !== 'GET') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
 
     if (!pulseId) {
         console.warn("[Webhook Compras]: Evento recibido sin pulseId:", JSON.stringify(req.body));
