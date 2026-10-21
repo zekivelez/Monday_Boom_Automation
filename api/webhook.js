@@ -99,19 +99,29 @@ export default async function handler(req, res) {
                     id
                 }
             }`;
-            const r = await fetchMonday(mutation, {
+            let r = await fetchMonday(mutation, {
                 boardId,
                 itemId,
                 columnId,
                 value: JSON.stringify({ label })
             });
+            // Si la etiqueta no existe en Monday, intentar con "EN PLANEACION" (etiqueta válida en color_mm8bdx4x)
+            if (r.errors && JSON.stringify(r.errors).includes("status label doesn't exist")) {
+                console.warn(`[STATUS]: Etiqueta "${label}" no existe en ${columnId}, aplicando "EN PLANEACION"...`);
+                r = await fetchMonday(mutation, {
+                    boardId,
+                    itemId,
+                    columnId,
+                    value: JSON.stringify({ label: "EN PLANEACION" })
+                });
+            }
             if (r.errors) {
-                console.warn(`[STATUS]: Advertencia al actualizar columna ${columnId} a "${label}":`, JSON.stringify(r.errors));
+                console.warn(`[STATUS]: Advertencia en columna ${columnId}:`, JSON.stringify(r.errors));
             } else {
-                console.log(`[STATUS]: Columna ${columnId} actualizada con éxito a "${label}".`);
+                console.log(`[STATUS]: Columna ${columnId} actualizada correctamente.`);
             }
         } catch (e) {
-            console.warn(`[STATUS]: No se pudo actualizar columna ${columnId} a "${label}":`, e.message);
+            console.warn(`[STATUS]: Excepción en columna ${columnId}:`, e.message);
         }
     };
 
@@ -167,6 +177,18 @@ export default async function handler(req, res) {
                     type
                     ... on MirrorValue { display_value }
                     ... on BoardRelationValue { display_value linked_item_ids linked_items { id name } }
+                }
+                subitems {
+                    id
+                    name
+                    column_values {
+                        id
+                        text
+                        value
+                        type
+                        ... on MirrorValue { display_value }
+                        ... on BoardRelationValue { display_value linked_item_ids linked_items { id name } }
+                    }
                 }
             }
         }`;
@@ -254,7 +276,8 @@ export default async function handler(req, res) {
             configCodigoTecnico,
             configNombreVisible,
             productoSeleccionado,
-            cantidadEquipos
+            cantidadEquipos,
+            orderSubitems: generadorItem.subitems || []
         });
 
         // =========================================================================
