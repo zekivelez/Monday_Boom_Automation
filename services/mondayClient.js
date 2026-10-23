@@ -80,7 +80,19 @@ export const extractColText = (col) => {
 export const extractColNumber = (col, defaultVal = 0) => {
     if (!col) return defaultVal;
     const txt = extractColText(col);
-    if (!txt) return defaultVal;
+    if (!txt) {
+        if (col.value !== undefined && col.value !== null) {
+            try {
+                const v = typeof col.value === 'string' ? JSON.parse(col.value) : col.value;
+                if (typeof v === 'number') return v;
+                if (typeof v === 'string') {
+                    const parsed = parseFloat(v.replace(/[^0-9.-]/g, ""));
+                    if (!isNaN(parsed)) return parsed;
+                }
+            } catch {}
+        }
+        return defaultVal;
+    }
     const clean = txt.replace(/[^0-9.-]/g, "");
     const num = parseFloat(clean);
     return isNaN(num) ? defaultVal : num;

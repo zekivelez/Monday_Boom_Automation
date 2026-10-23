@@ -147,6 +147,14 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
 
         const moduloNombre = extractColText(colRelModulo);
 
+        // Extraer cantidad del módulo asignada en la OF (columna oficial numeric_mm8d34jm o tipo numbers/numeric)
+        const colCantModulo = sCols.find(c => c.id === "numeric_mm8d34jm") ||
+                              sCols.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
+                              sCols.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
+                              sCols.find(c => c.type === "numbers" || c.type === "numeric");
+        let cantidadModulo = extractColNumber(colCantModulo, 1);
+        if (cantidadModulo <= 0) cantidadModulo = 1;
+
         modulosProcesados.push({
             subitemId: sub.id,
             nombreItem: sub.name,         // ej: "ESTRUCTURA CHASIS"
@@ -154,6 +162,7 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
             moduloNombre,                 // ej: "MODULO CHASIS PL40FT-M01/3E/2P"
             codigoModulo: "",             // se llenará de la consulta a 18432845727
             linkUrl,
+            cantidad: cantidadModulo,
             submodulos: []
         });
     }
@@ -202,14 +211,22 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
                 if (!submoduloNombre || submoduloNombre.trim() === '') {
                     submoduloNombre = s.name;
                 }
-                const cant = extractColNumber(sc.find(c => c.type === "numbers"), 1);
+                const cantCol = sc.find(c => c.id === "numeric_mm8d34jm") ||
+                                sc.find(c => c.id === "numeric_mm7j6c8r") ||
+                                sc.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
+                                sc.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
+                                sc.find(c => c.type === "numbers" || c.type === "numeric");
+                const cantBase = extractColNumber(cantCol, 1);
+                // Multiplicar la cantidad del submódulo por la cantidad del módulo en la OF
+                const cantCalculada = (cantBase > 0 ? cantBase : 1) * (mod.cantidad || 1);
                 const unidad = extractColText(sc.find(c => normalizeStr(c.id || "").includes("unidad") || c.type === "dropdown")) || "PZA";
 
                 mod.submodulos.push({
                     id: s.id,
                     indice: !isNaN(Number(s.name)) ? s.name : "",
                     nombre: submoduloNombre,
-                    cantidad: cant,
+                    cantidadBase: cantBase,
+                    cantidad: cantCalculada,
                     unidad
                 });
             }

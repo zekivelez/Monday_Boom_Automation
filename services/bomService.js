@@ -78,7 +78,11 @@ export async function explodeBom({
             }
 
             if (moduloId) {
-                let cant = extractColNumber(sCols.find(c => c.type === "numbers" || c.type === "numeric"), 1);
+                const colCant = sCols.find(c => c.id === "numeric_mm8d34jm") ||
+                                sCols.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
+                                sCols.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
+                                sCols.find(c => c.type === "numbers" || c.type === "numeric");
+                let cant = extractColNumber(colCant, 1);
                 if (cant <= 0) cant = 1;
                 const secSub = extractColText(sCols.find(c => c.id === "text_mm7snaqa" || normalizeStr(c.title || "").includes("secuencia")));
                 console.log(`[explodeBom]: Módulo detectado en OF: "${sub.name}" -> ID: ${moduloId} (Cant: ${cant})`);
@@ -169,7 +173,11 @@ export async function explodeBom({
                         console.warn(`[BOM MODULAR]: Subelemento "${sub.name}" de "${fila.name}" no tiene MODULO vinculado.`);
                         continue;
                     }
-                    let cant = extractColNumber(sCols.find(c => c.type === "numbers" || c.type === "numeric"), 1);
+                    const colCant = sCols.find(c => c.id === "numeric_mm8d34jm") ||
+                                    sCols.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
+                                    sCols.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
+                                    sCols.find(c => c.type === "numbers" || c.type === "numeric");
+                    let cant = extractColNumber(colCant, 1);
                     if (cant <= 0) cant = 1;
                     const secuenciaFabricacion = secSub || secFila || "";
                     const posicionBom = (idxFila + 1) * 100 + (idxSub + 1);
@@ -218,8 +226,12 @@ export async function explodeBom({
         }
         const candidatos = [];
         for (const s of (mod.subitems || [])) {
-            const sc = s.column_values || [];
-            const cantSub = extractColNumber(sc.find(c => c.id === "numeric_mm7j6c8r") || sc.find(c => c.type === "numbers"), 1);
+            const cantCol = sc.find(c => c.id === "numeric_mm8d34jm") ||
+                            sc.find(c => c.id === "numeric_mm7j6c8r") ||
+                            sc.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
+                            sc.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
+                            sc.find(c => c.type === "numbers" || c.type === "numeric");
+            const cantSub = extractColNumber(cantCol, 1);
             sc.filter(c => c.type === "board_relation").forEach(c => {
                 getLinkedIds(c).forEach(id => candidatos.push({ id, cant: cantSub }));
             });
@@ -356,7 +368,11 @@ export async function explodeBom({
             for (const mat of submoduloEncontrado.subitems) {
                 const mCols = mat.column_values || [];
                 const secMaterial = extractColText(mCols.find(col => col.id === "text_mm7snaqa")) || secEntrada;
-                const numCol = mCols.find(c => c.id === "numeric_mm7jbpty") || mCols.find(c => c.type === "numbers");
+                const numCol = mCols.find(c => c.id === "numeric_mm8d34jm") ||
+                               mCols.find(c => c.id === "numeric_mm7jbpty") ||
+                               mCols.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
+                               mCols.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
+                               mCols.find(c => c.type === "numbers" || c.type === "numeric");
                 const umCol = mCols.find(c => c.id?.includes("unidad") || c.id?.includes("medida") || c.type === "text" || c.type === "dropdown");
 
                 const relMaterialCol = mCols.find(c => c.id === "board_relation_mm7jcgm0") || mCols.find(c => c.type === "board_relation");
