@@ -226,6 +226,7 @@ export async function explodeBom({
         }
         const candidatos = [];
         for (const s of (mod.subitems || [])) {
+            const sc = s.column_values || [];
             const cantCol = sc.find(c => c.id === "numeric_mm8d34jm") ||
                             sc.find(c => c.id === "numeric_mm7j6c8r") ||
                             sc.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
