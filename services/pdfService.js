@@ -223,10 +223,9 @@ export async function generateBomFabricacionPdf({ orden, modulos }) {
             color: primaryBlue
         });
 
-        // Título del Módulo
-        const cantTxt = (mod.cantidad && mod.cantidad > 1) ? ` (x${mod.cantidad})` : "";
-        const modTitle = `${numPartida}. ${safeText(mod.nombreItem)}${cantTxt}`;
-        page.drawText(modTitle.slice(0, 42), { x: 36, y: y - 10, size: 7.5, font: fontBold, color: white });
+        // Título del Módulo (Limpio según Opción A)
+        const modTitle = `${numPartida}. ${safeText(mod.nombreItem)}`;
+        page.drawText(modTitle.slice(0, 38), { x: 36, y: y - 10, size: 7.5, font: fontBold, color: white });
 
         if (mod.moduloNombre && mod.moduloNombre.trim() !== '') {
             const codTxt = mod.codigoModulo ? `${mod.codigoModulo} : ` : "";
