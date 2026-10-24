@@ -219,7 +219,16 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
                 const cantBase = extractColNumber(cantCol, 1);
                 // Multiplicar la cantidad del submódulo por la cantidad del módulo en la OF
                 const cantCalculada = (cantBase > 0 ? cantBase : 1) * (mod.cantidad || 1);
-                const unidad = extractColText(sc.find(c => normalizeStr(c.id || "").includes("unidad") || c.type === "dropdown")) || "PZA";
+                // Extraer unidad de medida (evitando columnas dropdown ajenas como secuencias o estaciones)
+                const colUnidad = sc.find(c => {
+                    const idNorm = normalizeStr(c.id || "");
+                    return idNorm.includes("unidad") || idNorm.includes("medida") || idNorm.includes("um");
+                });
+                let unidad = extractColText(colUnidad);
+                // Si está vacío o es un número (ej. "14" de secuencia/estación), asignar "PZA"
+                if (!unidad || /^\d+$/.test(unidad.trim())) {
+                    unidad = "PZA";
+                }
 
                 mod.submodulos.push({
                     id: s.id,
