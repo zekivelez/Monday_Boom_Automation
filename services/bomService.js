@@ -374,7 +374,13 @@ export async function explodeBom({
                                mCols.find(c => c.id?.toLowerCase().includes("mm8d34jm")) ||
                                mCols.find(c => normalizeStr(c.title || "").includes("cantidad") || normalizeStr(c.title || "").includes("calculad")) ||
                                mCols.find(c => c.type === "numbers" || c.type === "numeric");
-                const umCol = mCols.find(c => c.id?.includes("unidad") || c.id?.includes("medida") || c.type === "text" || c.type === "dropdown");
+                const umCol = mCols.find(c => {
+                    if (c.type === "numbers" || c.type === "numeric") return false;
+                    const idNorm = normalizeStr(c.id || "");
+                    const titleNorm = normalizeStr(c.title || "");
+                    return idNorm.includes("unidad") || idNorm.includes("medida") ||
+                           titleNorm.includes("unidad") || titleNorm.includes("medida");
+                });
 
                 const relMaterialCol = mCols.find(c => c.id === "board_relation_mm7jcgm0") || mCols.find(c => c.type === "board_relation");
                 let nombreMaterial = "";
@@ -430,7 +436,10 @@ export async function explodeBom({
                 }
 
                 const cantUnit = extractColNumber(numCol, 1);
-                const unidad = extractColText(umCol) || "PZA";
+                let unidad = extractColText(umCol);
+                if (!unidad || !isNaN(Number(unidad.trim().replace(',', '.')))) {
+                    unidad = "PZA";
+                }
                 const cantTotalMat = cantUnit * cantSubmodulo * cantidadEquipos;
 
                 const matObj = {

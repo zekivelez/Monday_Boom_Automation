@@ -219,14 +219,17 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
                 const cantBase = extractColNumber(cantCol, 1);
                 // Multiplicar la cantidad del submódulo por la cantidad del módulo en la OF
                 const cantCalculada = (cantBase > 0 ? cantBase : 1) * (mod.cantidad || 1);
-                // Extraer unidad de medida (evitando columnas dropdown ajenas como secuencias o estaciones)
+                // Extraer unidad de medida (descartando columnas numéricas)
                 const colUnidad = sc.find(c => {
+                    if (c.type === "numbers" || c.type === "numeric") return false;
                     const idNorm = normalizeStr(c.id || "");
-                    return idNorm.includes("unidad") || idNorm.includes("medida") || idNorm.includes("um");
+                    const titleNorm = normalizeStr(c.title || "");
+                    return idNorm.includes("unidad") || idNorm.includes("medida") ||
+                           titleNorm.includes("unidad") || titleNorm.includes("medida");
                 });
                 let unidad = extractColText(colUnidad);
-                // Si está vacío o es un número (ej. "14" de secuencia/estación), asignar "PZA"
-                if (!unidad || /^\d+$/.test(unidad.trim())) {
+                // Si está vacío o es cualquier número (ej. "14", "6.4", etc.), asignar "PZA"
+                if (!unidad || !isNaN(Number(unidad.trim().replace(',', '.')))) {
                     unidad = "PZA";
                 }
 
