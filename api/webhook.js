@@ -6,10 +6,12 @@ import {
     extractColText,
     extractColNumber,
     uploadPdfToMonday,
+    uploadFileToMonday,
     normalizeStr
 } from '../services/mondayClient.js';
 import { explodeBom } from '../services/bomService.js';
 import { generateComprasReportPdf } from '../services/pdfService.js';
+import { generateComprasReportExcel } from '../services/excelService.js';
 import { syncSolicitudesDeCompra } from '../services/comprasService.js';
 
 // Mapeo automático de nombres descriptivos a códigos de configuración técnica
@@ -27,6 +29,7 @@ export const BOARD_ORDENES_FABRICACION = "18434500734";
 // Columnas oficiales en el tablero de Órdenes de Fabricación (18434500734) para Lista de Compras
 export const COLUMN_STATUS_COMPRAS = "color_mm8bdx4x";
 export const COLUMN_FILE_COMPRAS = "file_mm8bcx7";
+export const COLUMN_FILE_EXCEL_COMPRAS = "file_mm8j1fkt";
 export const COLUMN_LINK_COMPRAS = "link_mm8b30hj";
 
 export default async function handler(req, res) {
@@ -318,6 +321,37 @@ export default async function handler(req, res) {
         console.log(`[PDF Compras]: Resultado de subida: ${pdfSubido ? 'EXITOSO' : 'FALLIDO'}`);
 
         // =========================================================================
+        // PASO 7.5: Generar y subir el Reporte Excel Oficial de Lista para Compras (file_mm8j1fkt)
+        // =========================================================================
+        console.log("[Paso 7.5]: Generando Lista de Compras en Excel...");
+        let excelSubido = false;
+        try {
+            const excelBuffer = await generateComprasReportExcel({
+                orderName,
+                producto: productoSeleccionado,
+                configNombre: configNombreVisible,
+                configCodigo: configCodigoTecnico,
+                cantidadEquipos,
+                consolidado
+            });
+
+            const fileExcelColId = COLUMN_FILE_EXCEL_COMPRAS;
+            console.log(`[Excel Compras]: Generado (${excelBuffer.length} bytes). Subiendo a columna ${fileExcelColId}...`);
+            const uploadExcelRes = await uploadFileToMonday(
+                pulseId,
+                token,
+                excelBuffer,
+                `LISTA_COMPRAS_${safeOrderFile}.xlsx`,
+                fileExcelColId,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            );
+            excelSubido = Boolean(uploadExcelRes && !uploadExcelRes.errors);
+            console.log(`[Excel Compras]: Resultado de subida: ${excelSubido ? 'EXITOSO' : 'FALLIDO'}`);
+        } catch (excelErr) {
+            console.error("[Excel Compras]: Error generando o subiendo Excel:", excelErr);
+        }
+
+        // =========================================================================
         // PASO 8: Sincronizar partidas en el tablero SOLICITUDES DE COMPRA (18434424067)
         // =========================================================================
         console.log("[Paso 8]: Sincronizando partidas en tablero SOLICITUDES DE COMPRA...");
@@ -365,6 +399,7 @@ export default async function handler(req, res) {
             submodulosExplosionados: desgloses.length,
             materialesTotales: consolidado.length,
             pdfGenerado: pdfSubido,
+            excelGenerado: excelSubido,
             solicitudesCompra: comprasSyncResult
         });
 

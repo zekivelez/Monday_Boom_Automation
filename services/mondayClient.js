@@ -109,7 +109,7 @@ export const getLinkedIds = (col) => {
     return [];
 };
 
-export const uploadPdfToMonday = async (itemId, token, pdfBytes, fileName, columnId = "file_mm7yxtgh") => {
+export const uploadFileToMonday = async (itemId, token, fileBytes, fileName, columnId = "file_mm7yxtgh", mimeType = "application/octet-stream") => {
     const form = new FormData();
     const mutation = `mutation ($file: File!) {
         add_file_to_column (
@@ -123,7 +123,7 @@ export const uploadPdfToMonday = async (itemId, token, pdfBytes, fileName, colum
 
     form.append("query", mutation);
     form.append("map", JSON.stringify({ "file": "variables.file" }));
-    const blob = new Blob([pdfBytes], { type: "application/pdf" });
+    const blob = new Blob([fileBytes], { type: mimeType });
     form.append("file", blob, fileName);
 
     const response = await fetch("https://api.monday.com/v2/file", {
@@ -134,4 +134,8 @@ export const uploadPdfToMonday = async (itemId, token, pdfBytes, fileName, colum
         body: form
     });
     return await response.json();
+};
+
+export const uploadPdfToMonday = async (itemId, token, pdfBytes, fileName, columnId = "file_mm7yxtgh") => {
+    return uploadFileToMonday(itemId, token, pdfBytes, fileName, columnId, "application/pdf");
 };

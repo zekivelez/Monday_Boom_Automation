@@ -432,6 +432,52 @@ export async function generateComprasReportPdf({ orderName, producto, configNomb
         return str + '...';
     };
 
+    const wrapText = (text, maxWidth, font, size) => {
+        const clean = safeText(text);
+        if (!clean) return ["-"];
+        const words = clean.split(/\s+/);
+        const lines = [];
+        let currentLine = "";
+
+        for (const word of words) {
+            const testLine = currentLine ? `${currentLine} ${word}` : word;
+            if (font.widthOfTextAtSize(testLine, size) <= maxWidth) {
+                currentLine = testLine;
+            } else {
+                if (currentLine) {
+                    lines.push(currentLine);
+                    if (font.widthOfTextAtSize(word, size) > maxWidth) {
+                        let part = "";
+                        for (const char of word) {
+                            if (font.widthOfTextAtSize(part + char, size) <= maxWidth) {
+                                part += char;
+                            } else {
+                                lines.push(part);
+                                part = char;
+                            }
+                        }
+                        currentLine = part;
+                    } else {
+                        currentLine = word;
+                    }
+                } else {
+                    let part = "";
+                    for (const char of word) {
+                        if (font.widthOfTextAtSize(part + char, size) <= maxWidth) {
+                            part += char;
+                        } else {
+                            lines.push(part);
+                            part = char;
+                        }
+                    }
+                    currentLine = part;
+                }
+            }
+        }
+        if (currentLine) lines.push(currentLine);
+        return lines.length > 0 ? lines : ["-"];
+    };
+
     const drawHeader = () => {
         const headerHeight = 44;
         
@@ -524,13 +570,13 @@ export async function generateComprasReportPdf({ orderName, producto, configNomb
         page.drawText("#", { x: 38, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("COD. PROV.", { x: 54, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
         page.drawText("SKU", { x: 106, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("DESCRIPCION DEL MATERIAL", { x: 144, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("FAMILIA / TIPO", { x: 288, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("U.M.", { x: 362, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("TOTAL", { x: 384, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
-        page.drawText("PROV. SUGERIDO", { x: 420, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("PROV. ALTERNO", { x: 498, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
-        page.drawText("[ ]", { x: 558, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("DESCRIPCION DEL MATERIAL", { x: 148, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("FAMILIA / TIPO", { x: 310, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("U.M.", { x: 370, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("TOTAL", { x: 392, y: y + 2, size: 6.8, font: fontBold, color: primaryColor });
+        page.drawText("PROV. SUGERIDO", { x: 428, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("PROV. ALTERNO", { x: 500, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
+        page.drawText("[ ]", { x: 560, y: y + 2, size: 6.8, font: fontBold, color: darkGray });
 
         page.drawLine({
             start: { x: 35, y: y - 3 },
@@ -654,7 +700,23 @@ export async function generateComprasReportPdf({ orderName, producto, configNomb
             familiasUnicasSet.add(mat.familia.trim());
         }
 
-        if (y < 42) {
+        const numStr = String(partidaContador);
+        const codProvLines = wrapText(mat.codigoProveedor || "-", 48, fontRegular, 6.8);
+        const skuStr = truncate(mat.sku || "S/SKU", 38, fontBold, 6.8);
+        const descLines = wrapText(mat.nombre, 158, fontRegular, 6.8);
+        const famStr = truncate(mat.familia || "GENERAL", 56, fontRegular, 6.8);
+        const umStr = safeText(mat.unidad);
+        const cantStr = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+        
+        const tieneProv = Boolean(mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-");
+        const provSugStr = truncate(tieneProv ? mat.proveedorPrincipal : "POR ASIGNAR", 68, fontRegular, 6.8);
+        const altProvStr = truncate(mat.proveedorAlterno || "-", 54, fontRegular, 6.8);
+
+        const lineCount = Math.max(descLines.length, codProvLines.length, 1);
+        const lineHeight = 8.2;
+        const rowHeight = 13 + (lineCount - 1) * lineHeight;
+
+        if (y - rowHeight < 42) {
             page = pdfDoc.addPage([612, 792]);
             y = 750;
             drawHeader();
@@ -664,47 +726,44 @@ export async function generateComprasReportPdf({ orderName, producto, configNomb
         if (partidaContador % 2 === 0) {
             page.drawRectangle({
                 x: 35,
-                y: y - 3,
+                y: y - 3 - (lineCount - 1) * lineHeight,
                 width: width - 70,
-                height: 13,
+                height: rowHeight,
                 color: lightGray
             });
         }
 
-        const numStr = String(partidaContador);
-        const codProvStr = truncate(mat.codigoProveedor || "-", 48, fontRegular, 6.8);
-        const skuStr = truncate(mat.sku || "S/SKU", 36, fontBold, 6.8);
-        const descStr = truncate(mat.nombre, 138, fontRegular, 6.8);
-        const famStr = truncate(mat.familia || "GENERAL", 68, fontRegular, 6.8);
-        const umStr = safeText(mat.unidad);
-        const cantStr = mat.cantTotal.toLocaleString('es-MX', { maximumFractionDigits: 2 });
-        
-        const tieneProv = Boolean(mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-");
-        const provSugStr = truncate(tieneProv ? mat.proveedorPrincipal : "POR ASIGNAR", 72, fontRegular, 6.8);
-        const altProvStr = truncate(mat.proveedorAlterno || "-", 56, fontRegular, 6.8);
-
         page.drawText(numStr, { x: 38, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(codProvStr, { x: 54, y, size: 6.8, font: fontRegular, color: darkGray });
+
+        for (let l = 0; l < codProvLines.length; l++) {
+            page.drawText(codProvLines[l], { x: 54, y: y - (l * lineHeight), size: 6.8, font: fontRegular, color: darkGray });
+        }
+
         page.drawText(skuStr, { x: 106, y, size: 6.8, font: fontBold, color: primaryColor });
-        page.drawText(descStr, { x: 144, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(famStr, { x: 288, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(umStr, { x: 362, y, size: 6.8, font: fontRegular, color: darkGray });
-        page.drawText(cantStr, { x: 384, y, size: 7, font: fontBold, color: primaryColor });
+
+        // Descripción completa del material sin truncar (soporta múltiples líneas)
+        for (let l = 0; l < descLines.length; l++) {
+            page.drawText(descLines[l], { x: 148, y: y - (l * lineHeight), size: 6.8, font: fontRegular, color: darkGray });
+        }
+
+        page.drawText(famStr, { x: 310, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(umStr, { x: 370, y, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(cantStr, { x: 392, y, size: 7, font: fontBold, color: primaryColor });
         
         // Proveedor sugerido
         page.drawText(provSugStr, { 
-            x: 420, 
+            x: 428, 
             y, 
             size: 6.8, 
             font: fontRegular, 
             color: tieneProv ? darkGray : rgb(0.6, 0.4, 0.2) 
         });
         
-        page.drawText(altProvStr, { x: 498, y, size: 6.8, font: fontRegular, color: rgb(0.4, 0.4, 0.4) });
+        page.drawText(altProvStr, { x: 500, y, size: 6.8, font: fontRegular, color: rgb(0.4, 0.4, 0.4) });
 
         // Casilla de verificación cuadrada [ ]
         page.drawRectangle({
-            x: 559,
+            x: 561,
             y: y - 1,
             width: 8,
             height: 8,
@@ -715,13 +774,13 @@ export async function generateComprasReportPdf({ orderName, producto, configNomb
 
         // Línea divisoria suave
         page.drawLine({
-            start: { x: 35, y: y - 3 },
-            end: { x: width - 35, y: y - 3 },
+            start: { x: 35, y: y - 3 - (lineCount - 1) * lineHeight },
+            end: { x: width - 35, y: y - 3 - (lineCount - 1) * lineHeight },
             color: borderColor,
             thickness: 0.3
         });
 
-        y -= 13;
+        y -= rowHeight;
     }
 
     // =========================================================================
