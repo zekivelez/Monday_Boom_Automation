@@ -230,8 +230,8 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
 
             y -= (cardH + 7);
 
-            // 3. CAJA DE CONDICIONES COMERCIALES Y FECHAS
-            const termsH = 34;
+            // 3. CAJA DE CONDICIONES COMERCIALES Y FECHAS (3 filas limpias y balanceadas)
+            const termsH = 48;
             page.drawRectangle({
                 x: 35,
                 y: y - termsH,
@@ -242,26 +242,26 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
                 borderWidth: 0.8
             });
 
-            // Fila 1 de Términos
-            let termY = y - 10;
-            const drawTerm = (label, val, xPos, maxCh = 30) => {
-                page.drawText(label, { x: xPos, y: termY, size: 6.2, font: fontBold, color: mediumGray });
-                page.drawText(safeText(val).slice(0, maxCh), { x: xPos, y: termY - 8, size: 6.8, font: fontBold, color: darkGray });
+            const drawTerm = (label, val, xPos, rowY, maxCh = 30) => {
+                page.drawText(label, { x: xPos, y: rowY, size: 6.2, font: fontBold, color: mediumGray });
+                page.drawText(safeText(val).slice(0, maxCh), { x: xPos, y: rowY - 8, size: 6.8, font: fontBold, color: darkGray });
             };
 
-            drawTerm("FECHA EMISION:", ordenCompra.fechaEmision, 42, 14);
-            drawTerm("FECHA ENTREGA:", ordenCompra.fechaComprometida, 130, 15);
-            drawTerm("MONEDA:", ordenCompra.moneda, 225, 10);
-            drawTerm("CONDICIONES PAGO:", ordenCompra.condicionesPago, 285, 24);
-            drawTerm("ENTREGA (L.A.B.):", ordenCompra.entregaLab, 415, 30);
+            // Fila 1 de Términos
+            drawTerm("FECHA EMISION:", ordenCompra.fechaEmision, 42, y - 9, 14);
+            drawTerm("FECHA ENTREGA:", ordenCompra.fechaComprometida, 145, y - 9, 15);
+            drawTerm("MONEDA:", ordenCompra.moneda, 255, y - 9, 8);
+            drawTerm("CONDICIONES PAGO:", ordenCompra.condicionesPago, 340, y - 9, 35);
 
             // Fila 2 de Términos
-            termY -= 17;
-            drawTerm("METODO PAGO:", ordenCompra.metodoPago, 42, 10);
-            drawTerm("FORMA DE PAGO:", ordenCompra.formaPago, 115, 28);
-            drawTerm("USO CFDI:", ordenCompra.usoCfdi, 245, 30);
-            drawTerm("COMPRADOR:", ordenCompra.compradorResponsable, 385, 22);
-            drawTerm("OF RELACIONADAS:", ordenCompra.ordenesFabricacion, 485, 18);
+            drawTerm("METODO PAGO:", ordenCompra.metodoPago, 42, y - 24, 15);
+            drawTerm("FORMA DE PAGO:", ordenCompra.formaPago, 145, y - 24, 28);
+            drawTerm("USO CFDI:", ordenCompra.usoCfdi, 255, y - 24, 30);
+            drawTerm("ENTREGA (L.A.B.):", ordenCompra.entregaLab, 405, y - 24, 28);
+
+            // Fila 3 de Términos
+            drawTerm("COMPRADOR RESPONSABLE:", ordenCompra.compradorResponsable, 42, y - 39, 38);
+            drawTerm("OF RELACIONADAS:", ordenCompra.ordenesFabricacion, 255, y - 39, 55);
 
             y -= (termsH + 9);
         }
@@ -275,12 +275,12 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
             color: primaryBlue
         });
 
-        page.drawText("#", { x: 40, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("DESCRIPCION DEL MATERIAL / ARTICULO", { x: 60, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("CANT.", { x: 300, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("U.M.", { x: 335, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("#", { x: 38, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("DESCRIPCION DEL MATERIAL / ARTICULO", { x: 55, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("CANT.", { x: 278, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("U.M.", { x: 315, y: y - 10, size: 6.8, font: fontBold, color: white });
         page.drawText("P. UNITARIO", { x: 375, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("IMPORTE", { x: 450, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("IMPORTE", { x: 442, y: y - 10, size: 6.8, font: fontBold, color: white });
         page.drawText("F. LLEGADA", { x: 515, y: y - 10, size: 6.8, font: fontBold, color: white });
 
         y -= 14;
@@ -289,7 +289,7 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
     drawPageHeader(true);
 
     // 5. RENDERIZADO DE PARTIDAS CON TEXT WRAPPING DINÁMICO
-    const descWidth = 232; // Ancho generoso desde x=60 hasta x=295
+    const descWidth = 215; // Ancho generoso desde x=55 hasta x=270
 
     for (let i = 0; i < ordenCompra.partidas.length; i++) {
         const item = ordenCompra.partidas[i];
@@ -319,12 +319,12 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
         const baselineY = y - 9.5;
 
         // # Partida
-        page.drawText(String(item.partidaNum), { x: 40, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
+        page.drawText(String(item.partidaNum), { x: 38, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
 
         // Descripción completa en múltiples líneas
         for (let l = 0; l < descLines.length; l++) {
             page.drawText(descLines[l], {
-                x: 60,
+                x: 55,
                 y: baselineY - (l * lineHeight),
                 size: 6.8,
                 font: fontRegular,
@@ -334,21 +334,21 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
 
         // Cantidad
         page.drawText(Number(item.cantidad).toLocaleString('es-MX', { maximumFractionDigits: 2 }), {
-            x: 300,
+            x: 278,
             y: baselineY,
             size: 6.8,
             font: fontBold,
             color: darkGray
         });
 
-        // Unidad de Medida
-        page.drawText(safeText(item.unidad), { x: 335, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
+        // Unidad de Medida (con 60 pt de espacio, nunca colisiona con Precio)
+        page.drawText(safeText(item.unidad), { x: 315, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
 
         // Precio Unitario
         page.drawText(formatMoney(item.precioUnitario), { x: 375, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
 
         // Importe
-        page.drawText(formatMoney(item.importe), { x: 450, y: baselineY, size: 6.8, font: fontBold, color: primaryBlue });
+        page.drawText(formatMoney(item.importe), { x: 442, y: baselineY, size: 6.8, font: fontBold, color: primaryBlue });
 
         // Fecha de Llegada
         page.drawText(safeText(item.fechaLlegada).slice(0, 12), { x: 515, y: baselineY, size: 6.5, font: fontRegular, color: mediumGray });
