@@ -8,6 +8,7 @@ import {
 } from './mondayClient.js';
 
 export const BOARD_ORDENES_DE_COMPRA = "18435123821";
+export const BOARD_CATALOGO_PROVEEDORES = "18434817715";
 export const COLUMN_FILE_PDF_OC = "file_mm8fdbd2";
 export const COLUMN_STATUS_OC = "color_mm7xx0e8";
 export const COLUMN_TOTAL_OC = "numeric_mm8fs1f1";
@@ -103,33 +104,88 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
     const ordenesFabricacion = extractColText(getCol("text_mm8fvgsb")) || "-";
     const observaciones = extractColText(getCol("long_text_mm7xeqbm")) || "";
 
-    // 2. Extraer datos del Proveedor (board_relation_mm8fk8az)
+    // 2. Extraer datos del Proveedor
+    // Prioridad 1: Columnas lookup en el propio tablero de Ordenes de Compra:
+    // UBICACION: lookup_mm8rv3tg
+    // TELEFONO: lookup_mm8rykzv
+    // CORREO ELECTRONICO: lookup_mm8redrm
     const provCol = getCol("board_relation_mm8fk8az");
     const linkedProv = provCol?.linked_items?.[0];
     let proveedorNombre = linkedProv?.name || extractColText(provCol) || "PROVEEDOR GENERAL";
-    let proveedorRfc = "-";
-    let proveedorDireccion = "-";
-    let proveedorContacto = "-";
-    let proveedorTelefono = "-";
-    let proveedorCorreo = "-";
 
+    let proveedorDireccion = extractColText(getCol("lookup_mm8rv3tg")) || "-";
+    let proveedorTelefono = extractColText(getCol("lookup_mm8rykzv")) || "-";
+    let proveedorCorreo = extractColText(getCol("lookup_mm8redrm")) || "-";
+    let proveedorRfc = "-";
+    let proveedorContacto = "-";
+
+    // Si linked_items tiene columnas del tablero de Proveedores (18434817715) o faltan datos, exploramos linked_items:
     if (linkedProv && linkedProv.column_values) {
         for (const pc of linkedProv.column_values) {
             const val = extractColText(pc);
             const idNorm = normalizeStr(pc.id || "");
+            const titleNorm = normalizeStr(pc.title || "");
             if (!val) continue;
 
-            if (idNorm.includes("rfc") && proveedorRfc === "-") {
-                proveedorRfc = val;
-            } else if ((idNorm.includes("direccion") || idNorm.includes("domicilio")) && proveedorDireccion === "-") {
+            if (proveedorDireccion === "-" && (idNorm.includes("ubicacion") || idNorm.includes("direccion") || idNorm.includes("domicilio") || titleNorm.includes("ubicacion") || titleNorm.includes("direccion"))) {
                 proveedorDireccion = val;
-            } else if ((idNorm.includes("contacto") || idNorm.includes("atencion")) && proveedorContacto === "-") {
-                proveedorContacto = val;
-            } else if ((idNorm.includes("telefono") || idNorm.includes("celular") || idNorm.includes("tel")) && proveedorTelefono === "-") {
+            }
+            if (proveedorTelefono === "-" && (idNorm.includes("telefono") || idNorm.includes("celular") || idNorm.includes("tel") || titleNorm.includes("telefono"))) {
                 proveedorTelefono = val;
-            } else if ((idNorm.includes("correo") || idNorm.includes("email") || idNorm.includes("mail")) && proveedorCorreo === "-") {
+            }
+            if (proveedorCorreo === "-" && (idNorm.includes("correo") || idNorm.includes("email") || idNorm.includes("mail") || titleNorm.includes("correo") || titleNorm.includes("email"))) {
                 proveedorCorreo = val;
             }
+            if (proveedorRfc === "-" && (idNorm.includes("rfc") || titleNorm.includes("rfc"))) {
+                proveedorRfc = val;
+            }
+            if (proveedorContacto === "-" && (idNorm.includes("contacto") || idNorm.includes("atencion") || titleNorm.includes("contacto"))) {
+                proveedorContacto = val;
+            }
+        }
+    }
+
+    // Si aún falta información del proveedor y tenemos su ID en el tablero 18434817715, hacemos consulta directa:
+    if (linkedProv?.id && (proveedorDireccion === "-" || proveedorTelefono === "-" || proveedorCorreo === "-")) {
+        try {
+            const provDetailQuery = `query ($provId: [ID!]) {
+                items(ids: $provId) {
+                    name
+                    column_values {
+                        id
+                        type
+                        text
+                        value
+                    }
+                }
+            }`;
+            const provDetailRes = await fetchMonday(provDetailQuery, { provId: [String(linkedProv.id)] });
+            const provItem = provDetailRes.data?.items?.[0];
+            if (provItem?.column_values) {
+                for (const pc of provItem.column_values) {
+                    const val = extractColText(pc);
+                    const idNorm = normalizeStr(pc.id || "");
+                    if (!val) continue;
+
+                    if (proveedorDireccion === "-" && (idNorm.includes("ubicacion") || idNorm.includes("direccion") || idNorm.includes("domicilio"))) {
+                        proveedorDireccion = val;
+                    }
+                    if (proveedorTelefono === "-" && (idNorm.includes("telefono") || idNorm.includes("celular") || idNorm.includes("tel"))) {
+                        proveedorTelefono = val;
+                    }
+                    if (proveedorCorreo === "-" && (idNorm.includes("correo") || idNorm.includes("email") || idNorm.includes("mail"))) {
+                        proveedorCorreo = val;
+                    }
+                    if (proveedorRfc === "-" && idNorm.includes("rfc")) {
+                        proveedorRfc = val;
+                    }
+                    if (proveedorContacto === "-" && (idNorm.includes("contacto") || idNorm.includes("atencion"))) {
+                        proveedorContacto = val;
+                    }
+                }
+            }
+        } catch (provErr) {
+            console.warn("[OC Service]: No se pudo consultar detalle adicional de proveedor:", provErr.message);
         }
     }
 

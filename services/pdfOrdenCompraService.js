@@ -219,14 +219,12 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
 
             let py = y - 24;
             page.drawText(safeText(ordenCompra.proveedor.nombre).slice(0, 48), { x: provX + 7, y: py, size: 7.2, font: fontBold, color: darkGray });
-            py -= 9.5;
-            page.drawText(`RFC: ${safeText(ordenCompra.proveedor.rfc)}`, { x: provX + 7, y: py, size: 6.8, font: fontBold, color: darkGray });
-            py -= 9.5;
-            page.drawText(`Atencion: ${safeText(ordenCompra.proveedor.contacto)}`.slice(0, 50), { x: provX + 7, y: py, size: 6.5, font: fontRegular, color: darkGray });
-            py -= 9.5;
-            page.drawText(`Direccion: ${safeText(ordenCompra.proveedor.direccion)}`.slice(0, 52), { x: provX + 7, y: py, size: 6.5, font: fontRegular, color: darkGray });
-            py -= 9.5;
-            page.drawText(`Contacto: ${safeText(ordenCompra.proveedor.telefono)} | ${safeText(ordenCompra.proveedor.correo)}`.slice(0, 55), { x: provX + 7, y: py, size: 6.2, font: fontRegular, color: mediumGray });
+            py -= 10.5;
+            page.drawText(`Ubicacion: ${safeText(ordenCompra.proveedor.direccion)}`.slice(0, 56), { x: provX + 7, y: py, size: 6.5, font: fontRegular, color: darkGray });
+            py -= 10.5;
+            page.drawText(`Telefono: ${safeText(ordenCompra.proveedor.telefono)}`.slice(0, 50), { x: provX + 7, y: py, size: 6.5, font: fontRegular, color: darkGray });
+            py -= 10.5;
+            page.drawText(`Correo: ${safeText(ordenCompra.proveedor.correo)}`.slice(0, 56), { x: provX + 7, y: py, size: 6.5, font: fontRegular, color: darkGray });
 
             y -= (cardH + 7);
 
