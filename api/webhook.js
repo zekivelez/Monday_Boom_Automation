@@ -248,7 +248,7 @@ export default async function handler(req, res) {
         // Datos de la orden (priorizando columnas del tablero 18434500734)
         const orderFolio = findCol("text_mm86c6s1", "id orden")?.text || (generadorItem.name.match(/OF[0-9A-Za-z_-]+/i)?.[0]);
         const orderName = orderFolio || generadorItem.name || `Orden #${pulseId}`;
-        const colCantidad = findCol("numeric_mm86z5h6", "cantidad") || findCol("numeric_mm7m4t8r", "cantidad");
+        const colCantidad = findCol("numeric_mm7yb4e", "cantidad de unidades") || findCol("numeric_mm86z5h6", "cantidad") || findCol("numeric_mm7m4t8r", "cantidad");
         const colProducto = findCol("text_mm86hsh9", "codigo de producto") || findCol("dropdown_mm7mhnmc", "producto");
         const colConfigText = findCol("text_mm864yeg", "codigo de configuracion") || findCol("text_mm7q5s7x", "codigo de configuracion");
         const colConfigDropdown = findCol("board_relation_mm86d06q", "catalogo de productos") || findCol("board_relation_mm7xwz6z", "configuracion") || findCol("dropdown_mm7mqdtg", "configuracion");

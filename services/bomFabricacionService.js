@@ -88,7 +88,32 @@ export async function getOrdenFabricacionBomData(fetchMonday, orderItemId) {
     const largo = getVal("text_mm86pff2") || getVal("LARGO");
     const ancho = getVal("text_mm86i0hh") || getVal("ANCHO");
     const alto = getVal("text_mm8639e4") || getVal("ALTO");
-    const cantidadUnidades = extractColNumber(orderCols.find(c => c.id === "numeric_mm86z5h6" || normalizeStr(c.id).includes("cantidad")), 1);
+    
+    // Extracción robusta de Cantidad de Unidades (prioriza ID exacto numeric_mm7yb4e de CANTIDAD DE UNIDADES)
+    let colCantidad = orderCols.find(c => c.id === "numeric_mm7yb4e" || c.id === "numeric_mm86z5h6" || c.id === "numeric_mm7m4t8r");
+    if (!colCantidad) {
+        const boardColCant = boardCols.find(b => {
+            const titleNorm = normalizeStr(b.title || "");
+            return (titleNorm.includes("cantidad") || titleNorm.includes("unidades")) && (b.type === "numbers" || b.type === "numeric");
+        });
+        if (boardColCant) {
+            colCantidad = orderCols.find(c => c.id === boardColCant.id);
+        }
+    }
+    if (!colCantidad) {
+        colCantidad = orderCols.find(c => {
+            const idNorm = normalizeStr(c.id || "");
+            return idNorm.includes("cantidad") || idNorm.includes("unidades");
+        });
+    }
+    let cantidadUnidades = extractColNumber(colCantidad, 1);
+    if (!cantidadUnidades || cantidadUnidades <= 0) {
+        const txtCant = getVal("numeric_mm7yb4e") || getVal("CANTIDAD DE UNIDADES") || getVal("CANTIDAD") || getVal("UNIDADES");
+        const parsed = parseFloat(String(txtCant).replace(/[^0-9.-]/g, ""));
+        if (!isNaN(parsed) && parsed > 0) cantidadUnidades = parsed;
+    }
+    if (!cantidadUnidades || cantidadUnidades <= 0) cantidadUnidades = 1;
+
     const niv = getVal("text_mm861tvd") || getVal("NIV");
     const anoModelo = getVal("text_mm86m3d4") || getVal("AÑO DEL MODELO") || "2027";
     const pesoVehicular = getVal("numeric_mm867a0t") || getVal("PESO VEHICULAR");
