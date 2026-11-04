@@ -4,12 +4,14 @@
 import { parseSecuenciaRank } from './mondayClient.js';
 
 export const BOARD_SOLICITUDES_COMPRA = "18434424067";
+export const COLUMN_RELACION_OF_SOLICITUDES = "board_relation_mm8gccw4";
 
 /**
  * Registra o sincroniza las partidas consolidadas en el tablero "SOLICITUDES DE COMPRA"
  */
 export async function syncSolicitudesDeCompra({
     fetchMonday,
+    orderId,
     orderName,
     producto,
     configNombre,
@@ -73,9 +75,14 @@ export async function syncSolicitudesDeCompra({
 
         const colValuesObj = {};
 
-        // OF RELACIONADA
+        // OF RELACIONADA (Texto)
         if (orderName) {
             colValuesObj["text_mm7xyyhr"] = String(orderName);
+        }
+
+        // VÍNCULO A ORDEN DE FABRICACIÓN (Columna de relación oficial board_relation_mm8gccw4)
+        if (orderId) {
+            colValuesObj[COLUMN_RELACION_OF_SOLICITUDES] = { item_ids: [Number(orderId)] };
         }
 
         // PRODUCTO / CONFIGURACIÓN

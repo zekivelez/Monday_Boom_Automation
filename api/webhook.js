@@ -357,6 +357,7 @@ export default async function handler(req, res) {
         console.log("[Paso 8]: Sincronizando partidas en tablero SOLICITUDES DE COMPRA...");
         const comprasSyncResult = await syncSolicitudesDeCompra({
             fetchMonday,
+            orderId: pulseId,
             orderName,
             producto: productoSeleccionado,
             configNombre: configNombreVisible,
