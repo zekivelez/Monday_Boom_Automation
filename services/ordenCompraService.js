@@ -211,6 +211,9 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
             unidad = "PZA";
         }
 
+        // Código de proveedor: lookup_mm8sksr0
+        const codigoProveedor = extractColText(getSubCol("lookup_mm8sksr0")) || "-";
+
         // Precios:
         // PRECIO UNITARIO ACTUAL: lookup_mm8ft668
         const precioUnitarioActual = extractColNumber(getSubCol("lookup_mm8ft668"), 0);
@@ -228,6 +231,7 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
         partidas.push({
             partidaNum: i + 1,
             descripcion: nombreMaterial,
+            codigoProveedor,
             cantidad: cantOrdenada,
             unidad,
             precioUnitarioActual,

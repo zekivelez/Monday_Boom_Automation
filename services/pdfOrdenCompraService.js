@@ -274,9 +274,10 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
         });
 
         page.drawText("#", { x: 38, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("DESCRIPCION DEL MATERIAL / ARTICULO", { x: 55, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("CANT.", { x: 278, y: y - 10, size: 6.8, font: fontBold, color: white });
-        page.drawText("U.M.", { x: 315, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("COD. PROV.", { x: 52, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("DESCRIPCION DEL MATERIAL / ARTICULO", { x: 115, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("CANT.", { x: 282, y: y - 10, size: 6.8, font: fontBold, color: white });
+        page.drawText("U.M.", { x: 318, y: y - 10, size: 6.8, font: fontBold, color: white });
         page.drawText("P. UNITARIO", { x: 375, y: y - 10, size: 6.8, font: fontBold, color: white });
         page.drawText("IMPORTE", { x: 442, y: y - 10, size: 6.8, font: fontBold, color: white });
         page.drawText("F. LLEGADA", { x: 515, y: y - 10, size: 6.8, font: fontBold, color: white });
@@ -287,12 +288,14 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
     drawPageHeader(true);
 
     // 5. RENDERIZADO DE PARTIDAS CON TEXT WRAPPING DINÁMICO
-    const descWidth = 215; // Ancho generoso desde x=55 hasta x=270
+    const codProvWidth = 58; // Ancho para código de proveedor (x=52 a x=112)
+    const descWidth = 162;   // Ancho para descripción (x=115 a x=278)
 
     for (let i = 0; i < ordenCompra.partidas.length; i++) {
         const item = ordenCompra.partidas[i];
+        const codProvLines = wrapText(item.codigoProveedor || "-", codProvWidth, fontRegular, 6.8);
         const descLines = wrapText(item.descripcion, descWidth, fontRegular, 6.8);
-        const lineCount = descLines.length;
+        const lineCount = Math.max(descLines.length, codProvLines.length, 1);
         const lineHeight = 8.5;
         const rowHeight = 12 + (lineCount - 1) * lineHeight;
 
@@ -319,10 +322,21 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
         // # Partida
         page.drawText(String(item.partidaNum), { x: 38, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
 
+        // Código de Proveedor en múltiples líneas si es largo
+        for (let l = 0; l < codProvLines.length; l++) {
+            page.drawText(codProvLines[l], {
+                x: 52,
+                y: baselineY - (l * lineHeight),
+                size: 6.8,
+                font: fontRegular,
+                color: darkGray
+            });
+        }
+
         // Descripción completa en múltiples líneas
         for (let l = 0; l < descLines.length; l++) {
             page.drawText(descLines[l], {
-                x: 55,
+                x: 115,
                 y: baselineY - (l * lineHeight),
                 size: 6.8,
                 font: fontRegular,
@@ -332,15 +346,15 @@ export async function generateOrdenCompraPdf({ ordenCompra }) {
 
         // Cantidad
         page.drawText(Number(item.cantidad).toLocaleString('es-MX', { maximumFractionDigits: 2 }), {
-            x: 278,
+            x: 282,
             y: baselineY,
             size: 6.8,
             font: fontBold,
             color: darkGray
         });
 
-        // Unidad de Medida (con 60 pt de espacio, nunca colisiona con Precio)
-        page.drawText(safeText(item.unidad), { x: 315, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
+        // Unidad de Medida
+        page.drawText(safeText(item.unidad), { x: 318, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
 
         // Precio Unitario
         page.drawText(formatMoney(item.precioUnitario), { x: 375, y: baselineY, size: 6.8, font: fontRegular, color: darkGray });
