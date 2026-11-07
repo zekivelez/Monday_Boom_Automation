@@ -189,17 +189,17 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
         }
     }
 
-    // 3. Procesar subelementos (partidas de la orden de compra)
+    // 3. Procesar y consolidar subelementos (partidas de la orden de compra)
+    // Se agrupan y suman automáticamente las partidas repetidas con la misma descripción/clave
     const rawSubitems = item.subitems || [];
-    const partidas = [];
-    let subtotalCalculado = 0;
+    const partidasConsolidadasMap = new Map();
 
     for (let i = 0; i < rawSubitems.length; i++) {
         const sub = rawSubitems[i];
         const sc = sub.column_values || [];
         const getSubCol = (id) => sc.find(c => c.id === id);
 
-        const nombreMaterial = sub.name || `Partida ${i + 1}`;
+        const nombreMaterial = String(sub.name || `Partida ${i + 1}`).trim();
 
         // Cantidad ordenada: numeric_mm8fhc9y
         let cantOrdenada = extractColNumber(getSubCol("numeric_mm8fhc9y"), 0);
@@ -222,23 +222,64 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
 
         // Criterio: Usar precio negociado si > 0; de lo contrario precio unitario actual
         const precioUnitario = (precioNegociado > 0) ? precioNegociado : precioUnitarioActual;
-        const importePartida = Number((cantOrdenada * precioUnitario).toFixed(2));
-        subtotalCalculado += importePartida;
 
         // Fecha de llegada: date0
         const fechaLlegada = extractColText(getSubCol("date0")) || fechaComprometida;
 
+        // Clave única para consolidar (Nombre normalizado + Código de Proveedor si existe)
+        const claveConsolidada = `${normalizeStr(nombreMaterial)}_${normalizeStr(codigoProveedor)}`;
+
+        if (partidasConsolidadasMap.has(claveConsolidada)) {
+            const existente = partidasConsolidadasMap.get(claveConsolidada);
+            // Sumar la cantidad ordenada de las partidas duplicadas
+            existente.cantidad += cantOrdenada;
+
+            // Conservar el mejor precio si en uno venía negociado
+            if (precioNegociado > 0 && (!existente.precioNegociado || existente.precioNegociado <= 0)) {
+                existente.precioNegociado = precioNegociado;
+                existente.precioUnitario = precioNegociado;
+            } else if (!existente.precioUnitario || existente.precioUnitario <= 0) {
+                existente.precioUnitario = precioUnitario;
+            }
+
+            // Si el código de proveedor no estaba asignado y aquí sí viene, asignarlo
+            if ((!existente.codigoProveedor || existente.codigoProveedor === "-") && codigoProveedor && codigoProveedor !== "-") {
+                existente.codigoProveedor = codigoProveedor;
+            }
+        } else {
+            partidasConsolidadasMap.set(claveConsolidada, {
+                descripcion: nombreMaterial,
+                codigoProveedor,
+                cantidad: cantOrdenada,
+                unidad,
+                precioUnitarioActual,
+                precioNegociado,
+                precioUnitario,
+                fechaLlegada
+            });
+        }
+    }
+
+    // Convertir mapa a lista y calcular importes finales
+    const partidas = [];
+    let subtotalCalculado = 0;
+    let partidaContador = 1;
+
+    for (const p of partidasConsolidadasMap.values()) {
+        const importePartida = Number((p.cantidad * p.precioUnitario).toFixed(2));
+        subtotalCalculado += importePartida;
+
         partidas.push({
-            partidaNum: i + 1,
-            descripcion: nombreMaterial,
-            codigoProveedor,
-            cantidad: cantOrdenada,
-            unidad,
-            precioUnitarioActual,
-            precioNegociado,
-            precioUnitario,
+            partidaNum: partidaContador++,
+            descripcion: p.descripcion,
+            codigoProveedor: p.codigoProveedor || "-",
+            cantidad: p.cantidad,
+            unidad: p.unidad || "PZA",
+            precioUnitarioActual: p.precioUnitarioActual || 0,
+            precioNegociado: p.precioNegociado || 0,
+            precioUnitario: p.precioUnitario || 0,
             importe: importePartida,
-            fechaLlegada
+            fechaLlegada: p.fechaLlegada || fechaComprometida
         });
     }
 
