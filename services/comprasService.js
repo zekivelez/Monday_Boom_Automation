@@ -93,9 +93,9 @@ export async function syncSolicitudesDeCompra({
             colValuesObj["text_mm7xn7jy"] = String(configCodigo);
         }
 
-        // CANTIDAD REQUERIDA
+        // CANTIDAD A COMPRAR (numeric_mm7xdfcn)
         if (mat.cantTotal !== undefined && mat.cantTotal !== null) {
-            colValuesObj["numeric_mm7xthfb"] = Number(mat.cantTotal);
+            colValuesObj["numeric_mm7xdfcn"] = Number(mat.cantTotal);
         }
 
         // PROVEEDOR
