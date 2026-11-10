@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "target": "ES2022",
+    "moduleResolution": "node",
+    "forceConsistentCasingInFileNames": false,
+    "checkJs": false
+  },
+  "include": [
+    "api/**/*.js",
+    "services/**/*.js",
+    "components/**/*.js"
+  ]
+}
+

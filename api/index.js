@@ -3,8 +3,10 @@
 import webhookComprasHandler from './webhook.js';
 import generarBomHandler from './generar-bom.js';
 import ordenCompraHandler from './orden-compra.js';
+import listaAlmacenHandler from './lista-almacen.js';
 import { normalizeStr } from '../services/mondayClient.js';
 import { BOARD_ORDENES_DE_COMPRA, COLUMN_STATUS_OC } from '../services/ordenCompraService.js';
+import { COLUMN_STATUS_ALMACEN } from '../services/listaAlmacenService.js';
 
 export default async function handler(req, res) {
     // 1. Handshake de Monday (Challenge)
@@ -41,7 +43,7 @@ export default async function handler(req, res) {
         boardId === BOARD_ORDENES_DE_COMPRA ||
         colId === COLUMN_STATUS_OC ||
         colTitle.includes("estatus de la oc") ||
-        (statusText.includes("generad") && !statusText.includes("generar of") && !statusText.includes("generar lista")) ||
+        (statusText.includes("generad") && !statusText.includes("generar of") && !statusText.includes("generar lista") && !statusText.includes("genarar lista")) ||
         req.query?.tipo === 'oc' ||
         req.query?.tipo === 'orden_compra'
     ) {
@@ -49,32 +51,44 @@ export default async function handler(req, res) {
         return await ordenCompraHandler(req, res);
     }
 
-    // 3. Si el evento corresponde a "GENERAR LISTA" (Lista de Compras)
+    // 3. Si el evento corresponde a "GENERAR LISTA ALMACEN" (Columna color_mm8zwkgh)
+    if (
+        colId === COLUMN_STATUS_ALMACEN ||
+        colTitle.includes("almacen") ||
+        statusText.includes("almacen") ||
+        statusText.includes("genarar lista") ||
+        req.query?.tipo === 'almacen'
+    ) {
+        console.log("[Router]: Petición detectada para LISTA DE ALMACÉN POR SUBMÓDULO.");
+        return await listaAlmacenHandler(req, res);
+    }
+
+    // 4. Si el evento corresponde a "GENERAR LISTA" (Lista de Compras)
     if (
         colId === 'color_mm8bdx4x' || 
-        colTitle.includes("lista") || 
-        statusText.includes("lista") || 
+        (colTitle.includes("lista") && !colTitle.includes("almacen")) || 
+        (statusText.includes("lista") && !statusText.includes("almacen")) || 
         req.query?.tipo === 'compras'
     ) {
         console.log("[Router]: Petición detectada para LISTA DE COMPRAS (GENERAR LISTA).");
         return await webhookComprasHandler(req, res);
     }
 
-    // 4. Si el evento corresponde a "GENERAR OF" (BOM de Fabricación para taller)
+    // 5. Si el evento corresponde a "GENERAR OF" (BOM de Fabricación para taller)
     if (
         colTitle.includes("of") || 
         colTitle.includes("fabricacion") || 
         statusText.includes("of") || 
         statusText.includes("generar of") || 
         req.query?.tipo === 'bom' ||
-        (event?.pulseId && colId && colId !== 'color_mm8bdx4x' && colId !== COLUMN_STATUS_OC)
+        (event?.pulseId && colId && colId !== 'color_mm8bdx4x' && colId !== COLUMN_STATUS_OC && colId !== COLUMN_STATUS_ALMACEN)
     ) {
         console.log("[Router]: Petición detectada para BOM DE FABRICACIÓN (GENERAR OF).");
         return await generarBomHandler(req, res);
     }
 
-    // 4. Si no coincide con ninguno, responder OK sin ejecutar nada
-    console.log(`[Router]: Evento ignorado (no coincide con GENERAR OF ni GENERAR LISTA).`);
+    // 6. Si no coincide con ninguno, responder OK sin ejecutar nada
+    console.log(`[Router]: Evento ignorado (no coincide con GENERAR OF, GENERAR LISTA ni GENERAR LISTA ALMACEN).`);
     return res.status(200).json({
         message: "Ignorado: no coincide con eventos configurados",
         service: "Transtools Monday Automation"

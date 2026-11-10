@@ -5,6 +5,8 @@ import { createMondayClient, uploadPdfToMonday } from '../services/mondayClient.
 import { getOrdenFabricacionBomData, COLUMN_FILE_BOM } from '../services/bomFabricacionService.js';
 import { generateBomFabricacionPdf } from '../services/pdfService.js';
 import webhookComprasHandler from './webhook.js';
+import listaAlmacenHandler from './lista-almacen.js';
+import { COLUMN_STATUS_ALMACEN } from '../services/listaAlmacenService.js';
 
 export default async function handler(req, res) {
     console.log("--> [ENDPOINT GENERAR-BOM]:", req.method, JSON.stringify({ body: req.body, query: req.query }));
@@ -32,6 +34,12 @@ export default async function handler(req, res) {
     if (event?.columnId === 'color_mm8bdx4x') {
         console.log(`[Generar BOM]: Evento detectado para Compras (columna color_mm8bdx4x), delegando a webhook de compras...`);
         return await webhookComprasHandler(req, res);
+    }
+
+    // Delegación automática: si el evento viene de la columna de Lista de Almacén color_mm8zwkgh
+    if (event?.columnId === COLUMN_STATUS_ALMACEN) {
+        console.log(`[Generar BOM]: Evento detectado para Lista de Almacén (columna ${COLUMN_STATUS_ALMACEN}), delegando a lista-almacen...`);
+        return await listaAlmacenHandler(req, res);
     }
 
     console.log(`[Webhook Generar BOM]: Recibido para pulseId: ${pulseId}`);

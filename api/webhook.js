@@ -76,10 +76,14 @@ export default async function handler(req, res) {
 
     console.log(`[Webhook Compras]: pulseId=${pulseId}, columnId=${event?.columnId}, statusLabel="${statusLabel}", colTitle="${colTitle}"`);
 
-    // Protección estricta: Si el evento es de "GENERAR OF", ignorar inmediatamente en compras
+    // Protección estricta: Si el evento es de "GENERAR OF" o de "LISTA ALMACEN", ignorar inmediatamente en compras
     if (normStatus.includes(" of") || normStatus === "generar of" || colTitle.includes(" of") || colTitle === "generar of") {
         console.log(`[Webhook Compras]: Evento corresponde a 'GENERAR OF', ignorando en flujo de compras.`);
         return res.status(200).json({ message: "Ignorado en Compras: evento es de GENERAR OF" });
+    }
+    if (event?.columnId === "color_mm8zwkgh" || normStatus.includes("almacen") || colTitle.includes("almacen")) {
+        console.log(`[Webhook Compras]: Evento corresponde a 'LISTA ALMACEN', ignorando en flujo de compras.`);
+        return res.status(200).json({ message: "Ignorado en Compras: evento es de LISTA ALMACEN" });
     }
 
     // Si viene de un evento de webhook automático, debe coincidir estrictamente con Compras
