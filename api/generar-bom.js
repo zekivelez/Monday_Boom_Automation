@@ -6,7 +6,9 @@ import { getOrdenFabricacionBomData, COLUMN_FILE_BOM } from '../services/bomFabr
 import { generateBomFabricacionPdf } from '../services/pdfService.js';
 import webhookComprasHandler from './webhook.js';
 import listaAlmacenHandler from './lista-almacen.js';
+import ordenCompraHandler from './orden-compra.js';
 import { COLUMN_STATUS_ALMACEN } from '../services/listaAlmacenService.js';
+import { BOARD_ORDENES_DE_COMPRA, COLUMN_STATUS_OC } from '../services/ordenCompraService.js';
 
 export default async function handler(req, res) {
     console.log("--> [ENDPOINT GENERAR-BOM]:", req.method, JSON.stringify({ body: req.body, query: req.query }));
@@ -29,6 +31,12 @@ export default async function handler(req, res) {
 
     const { event } = req.body || {};
     const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
+
+    // Delegación automática: si el evento viene del tablero de Órdenes de Compra (18435123821) o columna color_mm7xx0e8
+    if (String(event?.boardId || "") === BOARD_ORDENES_DE_COMPRA || event?.columnId === COLUMN_STATUS_OC) {
+        console.log(`[Generar BOM]: Evento detectado para Orden de Compra, delegando a orden-compra...`);
+        return await ordenCompraHandler(req, res);
+    }
 
     // Delegación automática: si el evento viene de la columna de Compras color_mm8bdx4x
     if (event?.columnId === 'color_mm8bdx4x') {

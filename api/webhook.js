@@ -13,6 +13,10 @@ import { explodeBom } from '../services/bomService.js';
 import { generateComprasReportPdf } from '../services/pdfService.js';
 import { generateComprasReportExcel } from '../services/excelService.js';
 import { syncSolicitudesDeCompra } from '../services/comprasService.js';
+import ordenCompraHandler from './orden-compra.js';
+import listaAlmacenHandler from './lista-almacen.js';
+import { BOARD_ORDENES_DE_COMPRA, COLUMN_STATUS_OC } from '../services/ordenCompraService.js';
+import { COLUMN_STATUS_ALMACEN } from '../services/listaAlmacenService.js';
 
 // Mapeo automático de nombres descriptivos a códigos de configuración técnica
 const CONFIG_ALIASES = {
@@ -76,14 +80,22 @@ export default async function handler(req, res) {
 
     console.log(`[Webhook Compras]: pulseId=${pulseId}, columnId=${event?.columnId}, statusLabel="${statusLabel}", colTitle="${colTitle}"`);
 
-    // Protección estricta: Si el evento es de "GENERAR OF" o de "LISTA ALMACEN", ignorar inmediatamente en compras
+    // Delegación automática: si el evento viene del tablero de Órdenes de Compra (18435123821) o columna color_mm7xx0e8
+    if (String(event?.boardId || "") === BOARD_ORDENES_DE_COMPRA || event?.columnId === COLUMN_STATUS_OC) {
+        console.log(`[Webhook Compras]: Evento detectado para Orden de Compra, delegando a orden-compra...`);
+        return await ordenCompraHandler(req, res);
+    }
+
+    // Delegación automática: si el evento viene de la columna de Lista de Almacén (color_mm8zwkgh)
+    if (event?.columnId === COLUMN_STATUS_ALMACEN || normStatus.includes("almacen") || colTitle.includes("almacen")) {
+        console.log(`[Webhook Compras]: Evento detectado para Lista de Almacén, delegando a lista-almacen...`);
+        return await listaAlmacenHandler(req, res);
+    }
+
+    // Protección estricta: Si el evento es de "GENERAR OF", ignorar inmediatamente en compras
     if (normStatus.includes(" of") || normStatus === "generar of" || colTitle.includes(" of") || colTitle === "generar of") {
         console.log(`[Webhook Compras]: Evento corresponde a 'GENERAR OF', ignorando en flujo de compras.`);
         return res.status(200).json({ message: "Ignorado en Compras: evento es de GENERAR OF" });
-    }
-    if (event?.columnId === "color_mm8zwkgh" || normStatus.includes("almacen") || colTitle.includes("almacen")) {
-        console.log(`[Webhook Compras]: Evento corresponde a 'LISTA ALMACEN', ignorando en flujo de compras.`);
-        return res.status(200).json({ message: "Ignorado en Compras: evento es de LISTA ALMACEN" });
     }
 
     // Si viene de un evento de webhook automático, debe coincidir estrictamente con Compras

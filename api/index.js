@@ -30,7 +30,16 @@ export default async function handler(req, res) {
         (typeof event?.value === 'string' && !event?.value.startsWith('{') ? event.value : "")
     );
 
-    console.log(`[Router]: POST recibido boardId="${boardId}", colId="${colId}", colTitle="${colTitle}", statusText="${statusText}"`);
+    console.log(`[Router]: ${req.method} recibido boardId="${boardId}", colId="${colId}", colTitle="${colTitle}", statusText="${statusText}"`);
+
+    // Si es una visita por navegador (GET sin parámetros de evento ni pulseId), responder estado OK
+    if (req.method === 'GET' && !event && !req.query?.pulseId && !req.query?.tipo) {
+        return res.status(200).json({
+            status: 'ok',
+            service: 'Transtools Monday Automation Router',
+            endpoints: ['/api/orden-compra', '/api/webhook', '/api/generar-bom', '/api/lista-almacen']
+        });
+    }
 
     // Si el evento es un cambio de columna de archivo (ej. borraron o subieron un PDF), ignorar de inmediato
     if (colId.startsWith("file_") || event?.columnType === "file") {
