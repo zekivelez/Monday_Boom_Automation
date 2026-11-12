@@ -214,14 +214,30 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
         // Código de proveedor: lookup_mm8sksr0
         const codigoProveedor = extractColText(getSubCol("lookup_mm8sksr0")) || "-";
 
+        // Familia / Categoría: lookup_mm91s0ea (para detectar si contiene la palabra "ACERO")
+        const familia = extractColText(getSubCol("lookup_mm91s0ea")) || "";
+        const esAcero = normalizeStr(familia).includes("acero");
+
+        // Peso teórico: lookup_mm91grdh
+        const pesoTeorico = extractColNumber(getSubCol("lookup_mm91grdh"), 0);
+
         // Precios:
         // PRECIO UNITARIO ACTUAL: lookup_mm8ft668
         const precioUnitarioActual = extractColNumber(getSubCol("lookup_mm8ft668"), 0);
         // precio negociado: numeric_mm8fptc1
         const precioNegociado = extractColNumber(getSubCol("numeric_mm8fptc1"), 0);
 
-        // Criterio: Usar precio negociado si > 0; de lo contrario precio unitario actual
-        const precioUnitario = (precioNegociado > 0) ? precioNegociado : precioUnitarioActual;
+        // Criterio general: Usar precio negociado si > 0; de lo contrario precio unitario actual
+        const precioBase = (precioNegociado > 0) ? precioNegociado : precioUnitarioActual;
+
+        // Criterio especial para ACERO (lookup_mm91s0ea contiene "acero"):
+        // El precio unitario definitivo de la pieza se obtiene multiplicando PESO TEORICO (lookup_mm91grdh) * PRECIO NEGOCIADO (numeric_mm8fptc1)
+        let precioUnitario = precioBase;
+        if (esAcero && pesoTeorico > 0) {
+            const tarifaKg = (precioNegociado > 0) ? precioNegociado : precioUnitarioActual;
+            precioUnitario = Number((pesoTeorico * tarifaKg).toFixed(2));
+            console.log(`[OC Service - ACERO]: "${nombreMaterial}" | Familia="${familia}" | PesoTeorico=${pesoTeorico} * PrecioKg=${tarifaKg} => PrecioUnitario=${precioUnitario}`);
+        }
 
         // Fecha de llegada: date0
         const fechaLlegada = extractColText(getSubCol("date0")) || fechaComprometida;
@@ -234,11 +250,11 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
             // Sumar la cantidad ordenada de las partidas duplicadas
             existente.cantidad += cantOrdenada;
 
-            // Conservar el mejor precio si en uno venía negociado
+            // Conservar el precio calculado si en esta fila venía precio negociado o aún no tenía precio
             if (precioNegociado > 0 && (!existente.precioNegociado || existente.precioNegociado <= 0)) {
                 existente.precioNegociado = precioNegociado;
-                existente.precioUnitario = precioNegociado;
-            } else if (!existente.precioUnitario || existente.precioUnitario <= 0) {
+                existente.precioUnitario = precioUnitario;
+            } else if ((!existente.precioUnitario || existente.precioUnitario <= 0) && precioUnitario > 0) {
                 existente.precioUnitario = precioUnitario;
             }
 
@@ -250,6 +266,9 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
             partidasConsolidadasMap.set(claveConsolidada, {
                 descripcion: nombreMaterial,
                 codigoProveedor,
+                familia,
+                esAcero,
+                pesoTeorico,
                 cantidad: cantOrdenada,
                 unidad,
                 precioUnitarioActual,
