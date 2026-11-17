@@ -31,6 +31,7 @@ export async function syncSolicitudesDeCompra({
 
     const targetGroupTitle = `OF: ${orderName} (${producto || 'EQUIPO'})`;
     let targetGroupId = existingGroups.find(g => g.title?.trim().toLowerCase() === targetGroupTitle.toLowerCase())?.id;
+    const existingItemNames = new Set();
 
     // Si no existe el grupo para la orden, crearlo
     if (!targetGroupId) {
@@ -52,6 +53,31 @@ export async function syncSolicitudesDeCompra({
         }
     } else {
         console.log(`[SOLICITUDES DE COMPRA]: Usando grupo existente "${targetGroupTitle}" (ID: ${targetGroupId})`);
+        // Consultar ítems que ya existen en ese grupo para no duplicarlos si se vuelve a correr
+        try {
+            const existingQuery = `query ($boardId: [ID!], $groupId: [String!]) {
+                boards(ids: $boardId) {
+                    groups(ids: $groupId) {
+                        items_page(limit: 500) {
+                            items { id name }
+                        }
+                    }
+                }
+            }`;
+            const existingRes = await fetchMonday(existingQuery, {
+                boardId: [BOARD_SOLICITUDES_COMPRA],
+                groupId: [String(targetGroupId)]
+            });
+            const groupItems = existingRes.data?.boards?.[0]?.groups?.[0]?.items_page?.items || [];
+            for (const gi of groupItems) {
+                if (gi.name) existingItemNames.add(gi.name.trim().toLowerCase());
+            }
+            if (existingItemNames.size > 0) {
+                console.log(`[SOLICITUDES DE COMPRA]: El grupo ya cuenta con ${existingItemNames.size} partidas registradas (se omitirán duplicados).`);
+            }
+        } catch (e) {
+            console.warn(`[SOLICITUDES DE COMPRA]: No se pudieron consultar ítems previos del grupo:`, e.message);
+        }
     }
 
     // 2. Ordenar las partidas por SECUENCIA DE FABRICACION antes de crearlas
@@ -66,91 +92,100 @@ export async function syncSolicitudesDeCompra({
     const itemsCreados = [];
     const errores = [];
 
-    // 3. Crear cada partida en el tablero
-    for (let i = 0; i < partidasOrdenadas.length; i++) {
-        const mat = partidasOrdenadas[i];
-        const itemName = mat.sku && mat.sku !== "S/SKU" 
+    // Filtrar partidas que aún no existen en el grupo
+    const partidasPorCrear = partidasOrdenadas.filter(mat => {
+        const itemName = (mat.sku && mat.sku !== "S/SKU"
             ? `${mat.sku} - ${mat.nombre}`
-            : mat.nombre;
+            : mat.nombre).slice(0, 255).trim().toLowerCase();
+        return !existingItemNames.has(itemName);
+    });
 
-        const colValuesObj = {};
+    console.log(`[SOLICITUDES DE COMPRA]: Creando ${partidasPorCrear.length} partidas nuevas en bloques paralelos (${partidasOrdenadas.length - partidasPorCrear.length} ya existían)...`);
 
-        // OF RELACIONADA (Texto)
-        if (orderName) {
-            colValuesObj["text_mm7xyyhr"] = String(orderName);
-        }
+    // 3. Crear las partidas en lotes paralelos de 5 para evitar timeout de 300s en Vercel y de 60s en Monday
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < partidasPorCrear.length; i += BATCH_SIZE) {
+        const batch = partidasPorCrear.slice(i, i + BATCH_SIZE);
 
-        // VÍNCULO A ORDEN DE FABRICACIÓN (Columna de relación oficial board_relation_mm8gccw4)
-        if (orderId) {
-            colValuesObj[COLUMN_RELACION_OF_SOLICITUDES] = { item_ids: [Number(orderId)] };
-        }
+        await Promise.all(batch.map(async (mat) => {
+            const itemName = mat.sku && mat.sku !== "S/SKU" 
+                ? `${mat.sku} - ${mat.nombre}`
+                : mat.nombre;
 
-        // PRODUCTO / CONFIGURACIÓN
-        colValuesObj["text_mm7xy0s5"] = `${producto || ''} ${configNombre ? '| ' + configNombre : ''}`.trim();
+            const colValuesObj = {};
 
-        // BOM DE FABRICACIÓN
-        if (configCodigo) {
-            colValuesObj["text_mm7xn7jy"] = String(configCodigo);
-        }
-
-        // CANTIDAD A COMPRAR (numeric_mm7xdfcn)
-        if (mat.cantTotal !== undefined && mat.cantTotal !== null) {
-            colValuesObj["numeric_mm7xdfcn"] = Number(mat.cantTotal);
-        }
-
-        // PROVEEDOR
-        if (mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-") {
-            colValuesObj["text_mm7xxmqp"] = String(mat.proveedorPrincipal);
-        }
-
-        // FECHA SOLICITUD
-        colValuesObj["date_mm7xytge"] = { date: todayStr };
-
-        // RELACIÓN CON ARTÍCULOS (si tiene ID del catálogo)
-        if (mat.articuloId) {
-            colValuesObj["board_relation_mm7x4419"] = { item_ids: [Number(mat.articuloId)] };
-        }
-
-        // OBSERVACIONES
-        if (mat.secuenciaFabricacion) {
-            colValuesObj["long_text_mm7xeqbm"] = { text: `Secuencia de Fabricación: ${mat.secuenciaFabricacion}` };
-        }
-
-        const createItemMutation = `mutation ($boardId: ID!, $groupId: String, $itemName: String!, $columnValues: JSON!) {
-            create_item (
-                board_id: $boardId,
-                group_id: $groupId,
-                item_name: $itemName,
-                column_values: $columnValues
-            ) {
-                id
-                name
+            // OF RELACIONADA (Texto)
+            if (orderName) {
+                colValuesObj["text_mm7xyyhr"] = String(orderName);
             }
-        }`;
 
-        try {
-            const resp = await fetchMonday(createItemMutation, {
-                boardId: BOARD_SOLICITUDES_COMPRA,
-                groupId: targetGroupId,
-                itemName: itemName.slice(0, 255),
-                columnValues: JSON.stringify(colValuesObj)
-            });
-
-            if (resp.data?.create_item?.id) {
-                itemsCreados.push(resp.data.create_item.id);
-            } else if (resp.errors) {
-                console.error(`[SOLICITUDES DE COMPRA]: Error en partida "${itemName}":`, JSON.stringify(resp.errors));
-                errores.push({ item: itemName, error: resp.errors });
+            // VÍNCULO A ORDEN DE FABRICACIÓN (Columna de relación oficial board_relation_mm8gccw4)
+            if (orderId) {
+                colValuesObj[COLUMN_RELACION_OF_SOLICITUDES] = { item_ids: [Number(orderId)] };
             }
-        } catch (err) {
-            console.error(`[SOLICITUDES DE COMPRA]: Excepción al crear "${itemName}":`, err.message);
-            errores.push({ item: itemName, error: err.message });
-        }
 
-        // Pequeño descanso de 50ms para no saturar la cuota de Monday
-        if (i % 10 === 0 && i > 0) {
-            await new Promise(r => setTimeout(r, 60));
-        }
+            // PRODUCTO / CONFIGURACIÓN
+            colValuesObj["text_mm7xy0s5"] = `${producto || ''} ${configNombre ? '| ' + configNombre : ''}`.trim();
+
+            // BOM DE FABRICACIÓN
+            if (configCodigo) {
+                colValuesObj["text_mm7xn7jy"] = String(configCodigo);
+            }
+
+            // CANTIDAD A COMPRAR (numeric_mm7xdfcn)
+            if (mat.cantTotal !== undefined && mat.cantTotal !== null) {
+                colValuesObj["numeric_mm7xdfcn"] = Number(mat.cantTotal);
+            }
+
+            // PROVEEDOR
+            if (mat.proveedorPrincipal && mat.proveedorPrincipal !== "SIN ASIGNAR" && mat.proveedorPrincipal !== "-") {
+                colValuesObj["text_mm7xxmqp"] = String(mat.proveedorPrincipal);
+            }
+
+            // FECHA SOLICITUD
+            colValuesObj["date_mm7xytge"] = { date: todayStr };
+
+            // RELACIÓN CON ARTÍCULOS (si tiene ID del catálogo)
+            if (mat.articuloId) {
+                colValuesObj["board_relation_mm7x4419"] = { item_ids: [Number(mat.articuloId)] };
+            }
+
+            // OBSERVACIONES
+            if (mat.secuenciaFabricacion) {
+                colValuesObj["long_text_mm7xeqbm"] = { text: `Secuencia de Fabricación: ${mat.secuenciaFabricacion}` };
+            }
+
+            const createItemMutation = `mutation ($boardId: ID!, $groupId: String, $itemName: String!, $columnValues: JSON!) {
+                create_item (
+                    board_id: $boardId,
+                    group_id: $groupId,
+                    item_name: $itemName,
+                    column_values: $columnValues
+                ) {
+                    id
+                    name
+                }
+            }`;
+
+            try {
+                const resp = await fetchMonday(createItemMutation, {
+                    boardId: BOARD_SOLICITUDES_COMPRA,
+                    groupId: targetGroupId,
+                    itemName: itemName.slice(0, 255),
+                    columnValues: JSON.stringify(colValuesObj)
+                });
+
+                if (resp.data?.create_item?.id) {
+                    itemsCreados.push(resp.data.create_item.id);
+                } else if (resp.errors) {
+                    console.error(`[SOLICITUDES DE COMPRA]: Error en partida "${itemName}":`, JSON.stringify(resp.errors));
+                    errores.push({ item: itemName, error: resp.errors });
+                }
+            } catch (err) {
+                console.error(`[SOLICITUDES DE COMPRA]: Excepción al crear "${itemName}":`, err.message);
+                errores.push({ item: itemName, error: err.message });
+            }
+        }));
     }
 
     console.log(`[SOLICITUDES DE COMPRA]: Proceso terminado. ${itemsCreados.length} ítems creados con éxito, ${errores.length} errores.`);

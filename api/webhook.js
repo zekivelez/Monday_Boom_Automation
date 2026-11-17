@@ -52,6 +52,12 @@ export default async function handler(req, res) {
     const { event } = req.body || {};
     const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
 
+    // Protección contra reintentos automáticos de Monday (evita que se duplique la ejecución si tardó más en responder)
+    if (event?.isRetry === true && !req.query?.force) {
+        console.warn(`[Webhook Compras]: Ignorando reintento automático de Monday (isRetry: true) para pulseId=${pulseId}.`);
+        return res.status(200).json({ message: "Ignorado: reintento automático de Monday (isRetry=true)" });
+    }
+
     if (req.method === 'GET' && !pulseId) {
         return res.status(200).json({
             status: 'ok',

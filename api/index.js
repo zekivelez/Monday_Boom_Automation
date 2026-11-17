@@ -14,6 +14,10 @@ export default async function handler(req, res) {
     if (req.query?.challenge) return res.status(200).json({ challenge: req.query.challenge });
 
     const { event } = req.body || {};
+    if (event?.isRetry === true && !req.query?.force) {
+        console.warn(`[Router]: Ignorando reintento automático de Monday (isRetry: true) para pulseId=${event?.pulseId}.`);
+        return res.status(200).json({ message: "Ignorado: reintento automático de Monday (isRetry=true)" });
+    }
     const colId = event?.columnId || "";
     const colTitle = normalizeStr(event?.columnTitle || "");
     const boardId = String(event?.boardId || req.body?.boardId || req.query?.boardId || "");

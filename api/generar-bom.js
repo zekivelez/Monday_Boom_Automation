@@ -32,6 +32,11 @@ export default async function handler(req, res) {
     const { event } = req.body || {};
     const pulseId = event?.pulseId || event?.itemId || req.query?.pulseId || req.body?.pulseId;
 
+    if (event?.isRetry === true && !req.query?.force) {
+        console.warn(`[Generar BOM]: Ignorando reintento automático de Monday (isRetry: true) para pulseId=${pulseId}.`);
+        return res.status(200).json({ message: "Ignorado: reintento automático de Monday (isRetry=true)" });
+    }
+
     // Delegación automática: si el evento viene del tablero de Órdenes de Compra (18435123821) o columna color_mm7xx0e8
     if (String(event?.boardId || "") === BOARD_ORDENES_DE_COMPRA || event?.columnId === COLUMN_STATUS_OC) {
         console.log(`[Generar BOM]: Evento detectado para Orden de Compra, delegando a orden-compra...`);
