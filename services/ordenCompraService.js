@@ -58,6 +58,13 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
             subitems {
                 id
                 name
+                board {
+                    columns {
+                        id
+                        title
+                        type
+                    }
+                }
                 column_values {
                     id
                     type
@@ -65,6 +72,23 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
                     value
                     ... on MirrorValue {
                         display_value
+                    }
+                    ... on BoardRelationValue {
+                        display_value
+                        linked_item_ids
+                        linked_items {
+                            id
+                            name
+                            column_values {
+                                id
+                                type
+                                text
+                                value
+                                ... on MirrorValue {
+                                    display_value
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -197,46 +221,85 @@ export async function getOrdenCompraData({ fetchMonday, itemId }) {
     for (let i = 0; i < rawSubitems.length; i++) {
         const sub = rawSubitems[i];
         const sc = sub.column_values || [];
+        const subBoardCols = sub.board?.columns || [];
         const getSubCol = (id) => sc.find(c => c.id === id);
+        const getSubColByTitle = (titleKeyword) => {
+            const kw = normalizeStr(titleKeyword);
+            const bCol = subBoardCols.find(b => normalizeStr(b.title || "").includes(kw));
+            if (bCol) return sc.find(c => c.id === bCol.id);
+            return sc.find(c => normalizeStr(c.id || "").includes(kw));
+        };
+
+        // Buscar también en el artículo vinculado (si existe relación al catálogo de artículos)
+        const relArtCol = sc.find(c => c.type === "board_relation" && c.linked_items?.length > 0);
+        const linkedArtCols = relArtCol?.linked_items?.[0]?.column_values || [];
 
         const nombreMaterial = String(sub.name || `Partida ${i + 1}`).trim();
 
         // Cantidad ordenada: numeric_mm8fhc9y
-        let cantOrdenada = extractColNumber(getSubCol("numeric_mm8fhc9y"), 0);
+        let cantOrdenada = extractColNumber(getSubCol("numeric_mm8fhc9y") || getSubColByTitle("cantidad ordenada"), 0);
         if (cantOrdenada <= 0) cantOrdenada = 1;
 
         // Unidad de compra: lookup_mm8fxhk1
-        let unidad = extractColText(getSubCol("lookup_mm8fxhk1")) || "PZA";
+        let unidad = extractColText(getSubCol("lookup_mm8fxhk1") || getSubColByTitle("unidad")) || "PZA";
         if (!isNaN(Number(unidad.trim().replace(',', '.')))) {
             unidad = "PZA";
         }
 
         // Código de proveedor: lookup_mm8sksr0
-        const codigoProveedor = extractColText(getSubCol("lookup_mm8sksr0")) || "-";
+        const codigoProveedor = extractColText(getSubCol("lookup_mm8sksr0") || getSubColByTitle("codigo de proveedor")) || "-";
 
-        // Familia / Categoría: lookup_mm91s0ea (para detectar si contiene la palabra "ACERO")
-        const familia = extractColText(getSubCol("lookup_mm91s0ea")) || "";
-        const esAcero = normalizeStr(familia).includes("acero");
+        // Familia / Categoría: lookup_mm91s0ea (o columna por título "FAMILIA" o en el artículo vinculado)
+        let familia = extractColText(getSubCol("lookup_mm91s0ea") || getSubColByTitle("familia")) || "";
+        if (!familia && linkedArtCols.length > 0) {
+            const artFamCol = linkedArtCols.find(c => {
+                const v = normalizeStr(extractColText(c));
+                return v.includes("acero") || normalizeStr(c.id || "").includes("familia") || normalizeStr(c.id || "").includes("categoria");
+            });
+            if (artFamCol) familia = extractColText(artFamCol);
+        }
+        // Respaldo adicional: buscar cualquier columna mirror/dropdown en el subelemento cuyo valor contenga "acero"
+        if (!normalizeStr(familia).includes("acero")) {
+            const anyAceroCol = sc.find(c => normalizeStr(extractColText(c)).includes("acero"));
+            if (anyAceroCol) familia = extractColText(anyAceroCol);
+        }
 
-        // Peso teórico: lookup_mm91grdh
-        const pesoTeorico = extractColNumber(getSubCol("lookup_mm91grdh"), 0);
+        const normMatName = normalizeStr(nombreMaterial);
+        const esAcero =
+            normalizeStr(familia).includes("acero") ||
+            normMatName.startsWith("placa ") ||
+            normMatName.startsWith("lamina ") ||
+            normMatName.startsWith("solera ") ||
+            normMatName.startsWith("ptr ") ||
+            normMatName.startsWith("canal ") ||
+            normMatName.startsWith("viga ") ||
+            normMatName.startsWith("angulo ");
+
+        // Peso teórico: lookup_mm91grdh (o por título "PESO TEORICO" o en el artículo vinculado)
+        let pesoTeorico = extractColNumber(getSubCol("lookup_mm91grdh") || getSubColByTitle("peso teori"), 0);
+        if (pesoTeorico <= 0 && linkedArtCols.length > 0) {
+            const artPesoCol = linkedArtCols.find(c => normalizeStr(c.id || "").includes("peso") || c.id === "numeric_mm8f2592" || c.id === "numeric_mm7ehx2x");
+            if (artPesoCol) pesoTeorico = extractColNumber(artPesoCol, 0);
+        }
 
         // Precios:
         // PRECIO UNITARIO ACTUAL: lookup_mm8ft668
-        const precioUnitarioActual = extractColNumber(getSubCol("lookup_mm8ft668"), 0);
+        const precioUnitarioActual = extractColNumber(getSubCol("lookup_mm8ft668") || getSubColByTitle("precio unitario actual"), 0);
         // precio negociado: numeric_mm8fptc1
-        const precioNegociado = extractColNumber(getSubCol("numeric_mm8fptc1"), 0);
+        const precioNegociado = extractColNumber(getSubCol("numeric_mm8fptc1") || getSubColByTitle("precio negociado"), 0);
 
         // Criterio general: Usar precio negociado si > 0; de lo contrario precio unitario actual
         const precioBase = (precioNegociado > 0) ? precioNegociado : precioUnitarioActual;
 
-        // Criterio especial para ACERO (lookup_mm91s0ea contiene "acero"):
+        // Criterio especial para ACERO (ACERO PLACAS, ACERO LAMINAS, ACERO PERFILES, ACERO CANAL, etc.):
         // El precio unitario definitivo de la pieza se obtiene multiplicando PESO TEORICO (lookup_mm91grdh) * PRECIO NEGOCIADO (numeric_mm8fptc1)
         let precioUnitario = precioBase;
         if (esAcero && pesoTeorico > 0) {
             const tarifaKg = (precioNegociado > 0) ? precioNegociado : precioUnitarioActual;
             precioUnitario = Number((pesoTeorico * tarifaKg).toFixed(2));
             console.log(`[OC Service - ACERO]: "${nombreMaterial}" | Familia="${familia}" | PesoTeorico=${pesoTeorico} * PrecioKg=${tarifaKg} => PrecioUnitario=${precioUnitario}`);
+        } else {
+            console.log(`[OC Service - PARTIDA]: "${nombreMaterial}" | Familia="${familia}" | esAcero=${esAcero} | PesoTeorico=${pesoTeorico} | PrecioNegociado=${precioNegociado} => PrecioUnitario=${precioUnitario}`);
         }
 
         // Fecha de llegada: date0
